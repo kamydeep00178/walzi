@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Walzi Wallpapers</string>
+    <string name="default_notification_channel_id">walzi_default_channel</string>
+    <string name="default_notification_channel_name">Walzi notifications</string>
+</resources>

@@ -2,9 +2,6 @@ package com.yunok.walzi.data.model
 
 import com.google.firebase.firestore.PropertyName
 
-/**
- * Mirrors the `wallpapers/{id}` document written by the Walzi admin portal.
- */
 data class WallpaperDto(
     @get:PropertyName("title") @set:PropertyName("title")
     var title: String = "",
@@ -30,8 +27,14 @@ data class WallpaperDto(
     @get:PropertyName("sizeLabel") @set:PropertyName("sizeLabel")
     var sizeLabel: String = "",
 
+    @get:PropertyName("titleLower") @set:PropertyName("titleLower")
+    var titleLower: String = "",
+
+    @get:PropertyName("tags") @set:PropertyName("tags")
+    var tags: List<String>? = null,
+
     @get:PropertyName("createdAt") @set:PropertyName("createdAt")
     var createdAt: Long = 0
 ) {
-    constructor() : this("", "", "", "", false, 0, "", "", 0)
+    constructor() : this("", "", "", "", false, 0, "", "", "", null, 0)
 }

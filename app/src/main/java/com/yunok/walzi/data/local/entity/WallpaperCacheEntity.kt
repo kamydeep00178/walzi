@@ -3,12 +3,6 @@ package com.yunok.walzi.data.local.entity
 import androidx.room.Entity
 import com.yunok.walzi.domain.model.Wallpaper
 
-/**
- * Room-cached mirror of a `wallpapers/{id}` Firestore document, tagged with which cache
- * "bucket" it belongs to ("recent", "popular", or "category:<id>"). The same wallpaper can
- * legitimately appear in more than one bucket at once (e.g. both Recent and Popular), so the
- * primary key is (id, bucket) rather than id alone.
- */
 @Entity(tableName = "wallpaper_cache", primaryKeys = ["id", "bucket"])
 data class WallpaperCacheEntity(
     val id: String,
@@ -21,7 +15,8 @@ data class WallpaperCacheEntity(
     val priority: Long,
     val resolution: String,
     val sizeLabel: String,
-    val createdAt: Long
+    val createdAt: Long,
+    val tags: List<String> = emptyList()
 )
 
 fun WallpaperCacheEntity.toDomain(isFavorite: Boolean) = Wallpaper(
@@ -35,5 +30,6 @@ fun WallpaperCacheEntity.toDomain(isFavorite: Boolean) = Wallpaper(
     resolution = resolution,
     sizeLabel = sizeLabel,
     createdAt = createdAt,
-    isFavorite = isFavorite
+    isFavorite = isFavorite,
+    tags = tags
 )

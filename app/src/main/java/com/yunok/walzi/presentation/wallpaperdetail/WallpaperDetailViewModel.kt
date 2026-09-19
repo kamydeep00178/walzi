@@ -16,14 +16,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/**
- * Backs the full-screen wallpaper preview AND its vertical swipe-through-more-wallpapers
- * behaviour. On open it loads one page (20) from whichever [WallpaperSource] the caller
- * came from ("feed" / "recent" / "popular" / "category"), or the complete bounded set for
- * "favorites" / "list" (a specific WallpaperList's saved ids). Locates the tapped wallpaper's
- * index within that set, and loads further pages as the user swipes down (paginated sources
- * only - favorites/list are already fully loaded).
- */
 @HiltViewModel
 class WallpaperDetailViewModel @Inject constructor(
     private val repository: WallpaperRepository,
@@ -37,6 +29,7 @@ class WallpaperDetailViewModel @Inject constructor(
     private val sourceParam: String = savedStateHandle.get<String>("source") ?: "feed"
     private val categoryIdParam: String? = savedStateHandle.get<String>("categoryId")
     private val listIdParam: String? = savedStateHandle.get<String>("listId")
+    private val queryParam: String? = savedStateHandle.get<String>("query")
 
     private var cursor: WallpaperCursor? = null
 
@@ -55,24 +48,16 @@ class WallpaperDetailViewModel @Inject constructor(
     override suspend fun handleIntent(intent: WallpaperDetailIntent) {
         when (intent) {
             WallpaperDetailIntent.LoadNextPage -> loadNextPage()
-
             is WallpaperDetailIntent.ToggleFavorite -> repository.toggleFavorite(intent.wallpaperId)
-
             is WallpaperDetailIntent.OpenSetWallpaperSheet ->
                 setState { copy(showTargetSheet = true, targetWallpaperId = intent.wallpaperId) }
-
             WallpaperDetailIntent.DismissSetWallpaperSheet -> setState { copy(showTargetSheet = false) }
-
             is WallpaperDetailIntent.ConfirmSetWallpaper -> confirmSetWallpaper(intent.wallpaperId, intent.target)
-
             is WallpaperDetailIntent.Download -> download(intent.wallpaperId)
-
             is WallpaperDetailIntent.OpenAddToListSheet ->
                 setState { copy(showAddToListSheet = true, addToListWallpaperId = intent.wallpaperId, newListNameDraft = "") }
-
             WallpaperDetailIntent.DismissAddToListSheet ->
                 setState { copy(showAddToListSheet = false, addToListWallpaperId = null) }
-
             is WallpaperDetailIntent.ToggleWallpaperInList -> {
                 if (intent.currentlyIn) {
                     listRepository.removeWallpaperFromList(intent.listId, intent.wallpaperId)
@@ -80,9 +65,7 @@ class WallpaperDetailViewModel @Inject constructor(
                     listRepository.addWallpaperToList(intent.listId, intent.wallpaperId)
                 }
             }
-
             is WallpaperDetailIntent.UpdateNewListNameDraft -> setState { copy(newListNameDraft = intent.value) }
-
             is WallpaperDetailIntent.CreateListAndAddWallpaper -> {
                 val name = currentState.newListNameDraft.trim()
                 if (name.isEmpty()) return
@@ -112,6 +95,12 @@ class WallpaperDetailViewModel @Inject constructor(
                 return@launch
             }
 
+            if (sourceParam == "search") {
+                val wallpapers = repository.searchWallpapersByTag(queryParam.orEmpty())
+                applyLoaded(wallpapers, endReached = true)
+                return@launch
+            }
+
             val source = sourceParam.toWallpaperSource(categoryIdParam)
             val page = repository.loadWallpaperPage(source, cursor = null)
             cursor = page.nextCursor
@@ -123,9 +112,6 @@ class WallpaperDetailViewModel @Inject constructor(
         var index = wallpapers.indexOfFirst { it.id == initialWallpaperId }
         val finalList: List<Wallpaper>
         if (index == -1) {
-            // The tapped wallpaper wasn't inside the first page (e.g. a deep link pointing
-            // deep into the collection) - fetch it directly and pin it to the front so
-            // swiping still works immediately, with the rest of the page trailing after it.
             val direct = repository.getWallpaperById(initialWallpaperId)
             finalList = if (direct != null) listOf(direct) + wallpapers else wallpapers
             index = 0
@@ -136,7 +122,7 @@ class WallpaperDetailViewModel @Inject constructor(
     }
 
     private fun loadNextPage() {
-        if (sourceParam == "favorites" || sourceParam == "list") return // already a complete bounded set
+        if (sourceParam == "favorites" || sourceParam == "list" || sourceParam == "search") return
         if (currentState.isLoadingMore || currentState.endReached) return
         viewModelScope.launch {
             setState { copy(isLoadingMore = true) }

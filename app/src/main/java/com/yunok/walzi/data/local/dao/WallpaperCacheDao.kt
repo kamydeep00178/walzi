@@ -17,15 +17,15 @@ interface WallpaperCacheDao {
     @Query("SELECT COUNT(*) FROM wallpaper_cache WHERE bucket = :bucket")
     suspend fun count(bucket: String): Int
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAll(items: List<WallpaperCacheEntity>)
-
     @Query("DELETE FROM wallpaper_cache WHERE bucket = :bucket")
     suspend fun clearBucket(bucket: String)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(wallpapers: List<WallpaperCacheEntity>)
+
     @Transaction
-    suspend fun replaceBucket(bucket: String, items: List<WallpaperCacheEntity>) {
+    suspend fun replaceBucket(bucket: String, wallpapers: List<WallpaperCacheEntity>) {
         clearBucket(bucket)
-        insertAll(items)
+        insertAll(wallpapers)
     }
 }

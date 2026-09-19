@@ -102,6 +102,8 @@ fun HomeScreen(
     onWallpaperClick: (wallpaperId: String, source: String) -> Unit,
     onCategoryClick: (String) -> Unit,
     onOpenList: (String) -> Unit,
+    onOpenSearch: () -> Unit,          // <- new
+    onOpenNotifications: () -> Unit,   // <- new
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -121,7 +123,7 @@ fun HomeScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().background(BgApp).windowInsetsPadding(WindowInsets.systemBars)) {
-        TopAppBarRow(onOpenDrawer = onOpenDrawer)
+        TopAppBarRow(onOpenDrawer = onOpenDrawer,onOpenSearch = onOpenSearch, onOpenNotifications = onOpenNotifications)
         FeedTabRow(
             selected = TAB_ORDER[pagerState.currentPage],
             onSelect = { tab -> goToTab(tab) }
@@ -220,7 +222,7 @@ fun HomeScreen(
 }
 
 @Composable
-private fun TopAppBarRow(onOpenDrawer: () -> Unit) {
+private fun TopAppBarRow(onOpenDrawer: () -> Unit,onOpenSearch: () -> Unit, onOpenNotifications: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -241,10 +243,10 @@ private fun TopAppBarRow(onOpenDrawer: () -> Unit) {
             )
         }
         Row {
-            IconButton(onClick = { /* notifications inbox */ }) {
+            IconButton(onClick = onOpenNotifications) {
                 Icon(Icons.Filled.Notifications, contentDescription = "Notifications", tint = TextPrimary)
             }
-          /*  IconButton(onClick = { *//* search *//* }) {
+            /*IconButton(onClick = onOpenSearch) {
                 Icon(Icons.Filled.Search, contentDescription = "Search", tint = TextPrimary)
             }*/
         }

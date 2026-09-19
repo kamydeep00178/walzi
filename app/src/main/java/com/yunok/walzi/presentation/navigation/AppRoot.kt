@@ -51,16 +51,6 @@ fun AppRoot(pendingDeepLink: DeepLinkTarget?) {
 
     // Apply a notification deep link exactly once when the app cold-starts from a tap.
     LaunchedEffect(pendingDeepLink) {
-        val target = pendingDeepLink ?: return@LaunchedEffect
-        when (target.screen) {
-            DeepLinkTarget.WALLPAPER -> target.wallpaperId?.let {
-                navController.navigate(Screen.WallpaperDetail.createRoute(it))
-            }
-            DeepLinkTarget.CATEGORY -> target.categoryId?.let {
-                navController.navigate(Screen.CategoryDetail.createRoute(it))
-            }
-            DeepLinkTarget.FAVORITES -> navController.navigate(Screen.Favorites.route)
-            DeepLinkTarget.COLLECTIONS, DeepLinkTarget.HOME -> { /* already on Home */ }
-        }
+        pendingDeepLink?.let { navController.navigateToDeepLinkTarget(it) }
     }
 }

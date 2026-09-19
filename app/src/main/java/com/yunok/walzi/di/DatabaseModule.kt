@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Room
 import com.yunok.walzi.data.local.WalziDatabase
 import com.yunok.walzi.data.local.dao.CategoryDao
+import com.yunok.walzi.data.local.dao.NotificationDao
+import com.yunok.walzi.data.local.dao.TagDao
 import com.yunok.walzi.data.local.dao.WallpaperCacheDao
 import dagger.Module
 import dagger.Provides
@@ -20,9 +22,6 @@ object DatabaseModule {
     @Singleton
     fun provideWalziDatabase(@ApplicationContext context: Context): WalziDatabase =
         Room.databaseBuilder(context, WalziDatabase::class.java, "walzi.db")
-            // This database is pure cache (Room mirrors Firestore + local prefs) - if the
-            // schema version bumps (e.g. a new column), wiping and re-fetching fresh is
-            // always safe and simpler than writing a migration for cache-only data.
             .fallbackToDestructiveMigration()
             .build()
 
@@ -31,4 +30,10 @@ object DatabaseModule {
 
     @Provides
     fun provideWallpaperCacheDao(database: WalziDatabase): WallpaperCacheDao = database.wallpaperCacheDao()
+
+    @Provides
+    fun provideNotificationDao(database: WalziDatabase): NotificationDao = database.notificationDao()
+
+    @Provides
+    fun provideTagDao(database: WalziDatabase): TagDao = database.tagDao()
 }

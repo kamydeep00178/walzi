@@ -19,6 +19,8 @@ import com.yunok.walzi.presentation.favorites.FavoritesScreen
 import com.yunok.walzi.presentation.home.HomeScreen
 import com.yunok.walzi.presentation.lists.ListDetailScreen
 import com.yunok.walzi.presentation.lists.ListsScreen
+import com.yunok.walzi.presentation.notifications.NotificationsScreen
+import com.yunok.walzi.presentation.search.SearchScreen
 import com.yunok.walzi.presentation.settings.SettingsScreen
 import com.yunok.walzi.presentation.wallpaperdetail.WallpaperDetailScreen
 
@@ -33,9 +35,6 @@ fun NavGraph(
     NavHost(
         navController = navController,
         startDestination = Screen.Home.route,
-        // Default motion for every destination (List/Category detail, Favorites, Settings,
-        // Lists): a subtle horizontal slide + fade, the standard "push forward / pop back"
-        // feel. WallpaperDetail overrides this below with its own zoom-style transition.
         enterTransition = {
             slideInHorizontally(
                 initialOffsetX = { fullWidth -> fullWidth / 4 },
@@ -69,7 +68,28 @@ fun NavGraph(
                     navController.navigate(Screen.WallpaperDetail.createRoute(id, source = source))
                 },
                 onCategoryClick = { id -> navController.navigate(Screen.CategoryDetail.createRoute(id)) },
-                onOpenList = { listId -> navController.navigate(Screen.ListDetail.createRoute(listId)) }
+                onOpenList = { listId -> navController.navigate(Screen.ListDetail.createRoute(listId)) },
+                onOpenSearch = { navController.navigate(Screen.Search.route) },
+                onOpenNotifications = { navController.navigate(Screen.Notifications.route) }
+            )
+        }
+
+        composable(Screen.Search.route) {
+            SearchScreen(
+                onBack = { navController.popBackStackOrHome() },
+                onWallpaperClick = { id, query ->
+                    navController.navigate(Screen.WallpaperDetail.createRoute(id, source = "search", query = query))
+                },
+                onCategoryClick = { id ->
+                    navController.navigate(Screen.CategoryDetail.createRoute(id))
+                }
+            )
+        }
+
+        composable(Screen.Notifications.route) {
+            NotificationsScreen(
+                onBack = { navController.popBackStackOrHome() },
+                onNavigate = { target -> navController.navigateToDeepLinkTarget(target) }
             )
         }
 
@@ -131,11 +151,9 @@ fun NavGraph(
                 navArgument("wallpaperId") { type = NavType.StringType },
                 navArgument("source") { type = NavType.StringType; defaultValue = "feed" },
                 navArgument("categoryId") { type = NavType.StringType; nullable = true; defaultValue = null },
-                navArgument("listId") { type = NavType.StringType; nullable = true; defaultValue = null }
+                navArgument("listId") { type = NavType.StringType; nullable = true; defaultValue = null },
+                navArgument("query") { type = NavType.StringType; nullable = true; defaultValue = null }
             ),
-            // Overrides the default slide with a "zoom into the photo" feel - scales up +
-            // fades in on open, scales back down + fades out on close. Feels closer to how
-            // Photos/Gallery-style apps open a full-screen image than a generic horizontal push.
             enterTransition = {
                 scaleIn(
                     initialScale = 0.92f,
@@ -161,8 +179,6 @@ fun NavGraph(
                 ) + fadeOut(animationSpec = tween(ZOOM_ANIM_DURATION_MS))
             }
         ) {
-            // wallpaperId / source / categoryId / listId are read straight from SavedStateHandle
-            // inside WallpaperDetailViewModel, so nothing further needs passing here.
             WallpaperDetailScreen(onBack = { navController.popBackStackOrHome() })
         }
     }

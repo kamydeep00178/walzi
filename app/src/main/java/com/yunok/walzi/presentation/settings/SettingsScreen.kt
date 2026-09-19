@@ -83,13 +83,13 @@ fun SettingsScreen(onBack: () -> Unit) {
 
         SettingsSection(title = "Wallpaper") {
             SettingsToggleRow("Auto-rotate wallpaper", "Change automatically every day", autoRotate) { autoRotate = it }
-            SettingsToggleRow("Daily suggestions", "Get a hand-picked pick each morning", dailySuggest) { dailySuggest = it }
+        //    SettingsToggleRow("Daily suggestions", "Get a hand-picked pick each morning", dailySuggest) { dailySuggest = it }
         }
 
-        SettingsSection(title = "Downloads") {
+       /* SettingsSection(title = "Downloads") {
             SettingsToggleRow("Wi-Fi only downloads", "Avoid using mobile data", wifiOnly) { wifiOnly = it }
             SettingsToggleRow("High-quality downloads", "Larger file size, sharper detail", hqDownload) { hqDownload = it }
-        }
+        }*/
 
         SettingsSection(title = "About") {
             if (showPrivacyRow) {

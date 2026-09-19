@@ -4,14 +4,18 @@ import com.yunok.walzi.data.local.CacheConfig
 import com.yunok.walzi.data.local.CacheMetaDataStore
 import com.yunok.walzi.data.local.FavoritesDataStore
 import com.yunok.walzi.data.local.dao.CategoryDao
+import com.yunok.walzi.data.local.dao.TagDao
 import com.yunok.walzi.data.local.dao.WallpaperCacheDao
 import com.yunok.walzi.data.local.entity.CategoryEntity
+import com.yunok.walzi.data.local.entity.TagEntity
 import com.yunok.walzi.data.local.entity.WallpaperCacheEntity
 import com.yunok.walzi.data.local.entity.toDomain
 import com.yunok.walzi.data.model.CategoryDto
+import com.yunok.walzi.data.model.TagDto
 import com.yunok.walzi.data.model.WallpaperDto
 import com.yunok.walzi.data.remote.FirestoreService
 import com.yunok.walzi.domain.model.Category
+import com.yunok.walzi.domain.model.Tag
 import com.yunok.walzi.domain.model.Wallpaper
 import com.yunok.walzi.domain.model.WallpaperCursor
 import com.yunok.walzi.domain.model.WallpaperPage
@@ -35,6 +39,7 @@ class WallpaperRepositoryImpl @Inject constructor(
     private val firestoreService: FirestoreService,
     private val favoritesDataStore: FavoritesDataStore,
     private val categoryDao: CategoryDao,
+    private val tagDao: TagDao,
     private val wallpaperCacheDao: WallpaperCacheDao,
     private val cacheMeta: CacheMetaDataStore
 ) : WallpaperRepository {
@@ -44,8 +49,6 @@ class WallpaperRepositoryImpl @Inject constructor(
         const val FEATURED_COUNT = 10
         const val FEATURED_POOL_SIZE = 50L
     }
-
-    // ---------- Categories: Room-cached, TTL-refreshed ----------
 
     override fun observeCategories(): Flow<List<Category>> =
         categoryDao.observeAll()
@@ -64,11 +67,34 @@ class WallpaperRepositoryImpl @Inject constructor(
             categoryDao.replaceAll(fresh.map { (id, dto) -> id.toCategoryEntity(dto) })
             cacheMeta.setCategoriesLastFetchedAt(System.currentTimeMillis())
         } catch (_: Exception) {
-            // Network/Firestore failure - keep serving whatever's already cached.
         }
     }
 
-    // ---------- Wallpapers: cached first page per bucket + live pagination beyond it ----------
+    override fun observeTags(): Flow<List<Tag>> =
+        tagDao.observeAll()
+            .onStart { refreshTagsIfStale() }
+            .map { entities -> entities.map { it.toDomain() } }
+
+    private suspend fun refreshTagsIfStale() {
+        val stale = isStale(
+            isEmpty = tagDao.count() == 0,
+            ttlDays = CacheConfig.CATEGORY_REFRESH_INTERVAL_DAYS,
+            lastFetchedAt = cacheMeta.getTagsLastFetchedAt()
+        )
+        if (!stale) return
+        try {
+            val fresh = firestoreService.getTagsOnce()
+            tagDao.replaceAll(fresh.map { it.toTagEntity() })
+            cacheMeta.setTagsLastFetchedAt(System.currentTimeMillis())
+        } catch (_: Exception) {
+        }
+    }
+
+    override suspend fun searchWallpapersByTag(tag: String, limit: Int): List<Wallpaper> {
+        val dtoList = firestoreService.searchWallpapersByTag(tag, limit.toLong())
+        val favoriteIds = favoritesDataStore.favoriteIds.first()
+        return dtoList.map { (id, dto) -> id.toWallpaper(dto, favoriteIds.contains(id)) }
+    }
 
     override fun observeCachedWallpapers(bucket: String): Flow<List<Wallpaper>> =
         combine(wallpaperCacheDao.observeByBucket(bucket), favoritesDataStore.favoriteIds) { entities, favoriteIds ->
@@ -87,7 +113,6 @@ class WallpaperRepositoryImpl @Inject constructor(
             wallpaperCacheDao.replaceBucket(bucket, dtoList.map { (id, dto) -> id.toWallpaperCacheEntity(dto, bucket) })
             cacheMeta.setWallpaperBucketLastFetchedAt(bucket, System.currentTimeMillis())
         } catch (_: Exception) {
-            // Network/Firestore failure - keep serving whatever's already cached.
         }
     }
 
@@ -121,28 +146,18 @@ class WallpaperRepositoryImpl @Inject constructor(
         favoritesDataStore.toggle(wallpaperId)
     }
 
-    // ---------- Featured carousel: daily random pick from the whole collection ----------
-
     override fun observeFeaturedWallpapers(): Flow<List<Wallpaper>> =
         observeCachedWallpapers(FEATURED_BUCKET)
 
     override suspend fun ensureFeaturedFresh() {
-        // Staleness here is "has the calendar day changed", not a rolling N-day TTL - the
-        // whole point is a fresh pick once per day, reusing the same last-fetched-at storage
-        // ensureWallpaperBucketFresh already uses, just compared differently.
         val lastGeneratedAt = cacheMeta.getWallpaperBucketLastFetchedAt(FEATURED_BUCKET)
         if (!isDifferentCalendarDay(lastGeneratedAt)) return
 
         try {
-            // No category or country filtering - just a pool pulled from across the whole
-            // collection (WallpaperSource.Feed orders by priority+createdAt with no where
-            // clause), then a deterministic daily shuffle picks 10 from that pool.
             val (pool, _) = firestoreService.getWallpaperPage(WallpaperSource.Feed, startAfter = null, pageSize = FEATURED_POOL_SIZE)
             if (pool.isEmpty()) return
 
             val today = LocalDate.now()
-            // Same day always yields the same 10 (so the carousel doesn't reshuffle every
-            // time this happens to run again today); a new day yields a different 10.
             val picks = pool.shuffled(Random(today.toEpochDay())).take(FEATURED_COUNT)
 
             wallpaperCacheDao.replaceBucket(
@@ -151,8 +166,6 @@ class WallpaperRepositoryImpl @Inject constructor(
             )
             cacheMeta.setWallpaperBucketLastFetchedAt(FEATURED_BUCKET, System.currentTimeMillis())
         } catch (_: Exception) {
-            // Keep serving yesterday's picks (or nothing, if this is the first run) if
-            // anything above fails - never leave the carousel in a half-updated state.
         }
     }
 
@@ -162,9 +175,6 @@ class WallpaperRepositoryImpl @Inject constructor(
         return lastDay != LocalDate.now()
     }
 
-    // ---------- Shared TTL check ----------
-
-    /** ttlDays <= 0 means "cache forever" - only ever considered stale while truly empty. */
     private fun isStale(isEmpty: Boolean, ttlDays: Long, lastFetchedAt: Long?): Boolean = when {
         isEmpty -> true
         ttlDays <= 0 -> false
@@ -172,14 +182,17 @@ class WallpaperRepositoryImpl @Inject constructor(
         else -> System.currentTimeMillis() - lastFetchedAt >= TimeUnit.DAYS.toMillis(ttlDays)
     }
 
-    // ---------- Mappers ----------
-
     private fun String.toCategoryEntity(dto: CategoryDto) = CategoryEntity(
         id = this,
         name = dto.name,
         imageUrl = dto.imageUrl,
         position = dto.position.toInt(),
         countryCodes = dto.countryCodes ?: emptyList()
+    )
+
+    private fun TagDto.toTagEntity() = TagEntity(
+        name = name,
+        wallpaperCount = wallpaperCount.toInt()
     )
 
     private fun String.toWallpaperCacheEntity(dto: WallpaperDto, bucket: String) = WallpaperCacheEntity(
@@ -193,7 +206,8 @@ class WallpaperRepositoryImpl @Inject constructor(
         priority = dto.priority,
         resolution = dto.resolution,
         sizeLabel = dto.sizeLabel,
-        createdAt = dto.createdAt
+        createdAt = dto.createdAt,
+        tags = dto.tags ?: emptyList()
     )
 
     private fun String.toWallpaper(dto: WallpaperDto, isFavorite: Boolean) = Wallpaper(
@@ -207,6 +221,7 @@ class WallpaperRepositoryImpl @Inject constructor(
         resolution = dto.resolution,
         sizeLabel = dto.sizeLabel,
         createdAt = dto.createdAt,
-        isFavorite = isFavorite
+        isFavorite = isFavorite,
+        tags = dto.tags ?: emptyList()
     )
 }

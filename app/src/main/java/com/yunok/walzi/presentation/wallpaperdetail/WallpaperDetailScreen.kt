@@ -180,7 +180,7 @@ fun WallpaperDetailScreen(
             }
 
             // Small position indicator, e.g. "4 / 20" - confirms there's more to swipe through.
-            Text(
+       /*     Text(
                 text = "${pagerState.currentPage + 1} / ${state.wallpapers.size}${if (!state.endReached) "+" else ""}",
                 color = Color.White.copy(alpha = 0.85f),
                 fontSize = 12.sp,
@@ -191,7 +191,7 @@ fun WallpaperDetailScreen(
                     .clip(RoundedCornerShape(999.dp))
                     .background(Color.Black.copy(alpha = 0.35f))
                     .padding(horizontal = 10.dp, vertical = 4.dp)
-            )
+            )*/
 
             if (state.showTargetSheet) {
                 val target = state.wallpapers.firstOrNull { it.id == state.targetWallpaperId }

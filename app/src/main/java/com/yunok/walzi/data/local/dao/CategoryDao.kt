@@ -17,14 +17,12 @@ interface CategoryDao {
     @Query("SELECT COUNT(*) FROM categories")
     suspend fun count(): Int
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAll(categories: List<CategoryEntity>)
-
     @Query("DELETE FROM categories")
     suspend fun clearAll()
 
-    /** Atomically replaces the whole cached set - avoids a brief "empty list" flash between
-     *  clear and insert, and avoids leaving stale rows if a category was deleted server-side. */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(categories: List<CategoryEntity>)
+
     @Transaction
     suspend fun replaceAll(categories: List<CategoryEntity>) {
         clearAll()

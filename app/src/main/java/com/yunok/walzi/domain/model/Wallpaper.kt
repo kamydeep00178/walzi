@@ -11,5 +11,6 @@ data class Wallpaper(
     val resolution: String,
     val sizeLabel: String,
     val createdAt: Long,
-    val isFavorite: Boolean = false
+    val isFavorite: Boolean = false,
+    val tags: List<String> = emptyList()
 )

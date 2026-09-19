@@ -11,29 +11,39 @@ import javax.inject.Singleton
 
 private val Context.cacheMetaDataStore by preferencesDataStore(name = "walzi_cache_meta")
 
-/** Tracks "when did we last successfully fetch X from the network" timestamps - one key for
- *  categories, and one dynamically-keyed entry per wallpaper cache bucket - so each has its
- *  own independent TTL check. */
 @Singleton
 class CacheMetaDataStore @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
-    private object Keys {
-        val CATEGORIES_LAST_FETCHED_AT = longPreferencesKey("categories_last_fetched_at")
-        fun wallpaperBucketLastFetchedAt(bucket: String) = longPreferencesKey("wallpapers_last_fetched_$bucket")
-    }
+    private val categoriesLastFetchedAtKey = longPreferencesKey("categories_last_fetched_at")
+    private val tagsLastFetchedAtKey = longPreferencesKey("tags_last_fetched_at")
+
+    // ---------- Categories ----------
 
     suspend fun getCategoriesLastFetchedAt(): Long? =
-        context.cacheMetaDataStore.data.first()[Keys.CATEGORIES_LAST_FETCHED_AT]
+        context.cacheMetaDataStore.data.first()[categoriesLastFetchedAtKey]
 
-    suspend fun setCategoriesLastFetchedAt(timestamp: Long) {
-        context.cacheMetaDataStore.edit { prefs -> prefs[Keys.CATEGORIES_LAST_FETCHED_AT] = timestamp }
+    suspend fun setCategoriesLastFetchedAt(millis: Long) {
+        context.cacheMetaDataStore.edit { it[categoriesLastFetchedAtKey] = millis }
     }
 
-    suspend fun getWallpaperBucketLastFetchedAt(bucket: String): Long? =
-        context.cacheMetaDataStore.data.first()[Keys.wallpaperBucketLastFetchedAt(bucket)]
+    // ---------- Tags ----------
 
-    suspend fun setWallpaperBucketLastFetchedAt(bucket: String, timestamp: Long) {
-        context.cacheMetaDataStore.edit { prefs -> prefs[Keys.wallpaperBucketLastFetchedAt(bucket)] = timestamp }
+    suspend fun getTagsLastFetchedAt(): Long? =
+        context.cacheMetaDataStore.data.first()[tagsLastFetchedAtKey]
+
+    suspend fun setTagsLastFetchedAt(millis: Long) {
+        context.cacheMetaDataStore.edit { it[tagsLastFetchedAtKey] = millis }
+    }
+
+    // ---------- Wallpaper buckets ----------
+
+    private fun wallpaperBucketKey(bucket: String) = longPreferencesKey("wallpaper_bucket_last_fetched_$bucket")
+
+    suspend fun getWallpaperBucketLastFetchedAt(bucket: String): Long? =
+        context.cacheMetaDataStore.data.first()[wallpaperBucketKey(bucket)]
+
+    suspend fun setWallpaperBucketLastFetchedAt(bucket: String, millis: Long) {
+        context.cacheMetaDataStore.edit { it[wallpaperBucketKey(bucket)] = millis }
     }
 }

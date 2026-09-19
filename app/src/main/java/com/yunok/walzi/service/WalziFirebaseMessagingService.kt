@@ -1,35 +1,39 @@
 package com.yunok.walzi.service
 
+import android.Manifest
 import android.app.PendingIntent
 import android.content.Intent
+import androidx.annotation.RequiresPermission
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.yunok.walzi.MainActivity
 import com.yunok.walzi.R
+import com.yunok.walzi.data.local.dao.NotificationDao
+import com.yunok.walzi.data.local.entity.NotificationEntity
 import com.yunok.walzi.presentation.navigation.DeepLinkTarget
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import java.util.UUID
+import javax.inject.Inject
 import kotlin.random.Random
 
-/**
- * Receives pushes sent from the Walzi admin portal's Notifications dashboard.
- * Every message includes a data payload:
- *   screen        -> "home" | "collections" | "favorites" | "category" | "wallpaper"
- *   wallpaperId   -> present when screen == "wallpaper"
- *   categoryId    -> present when screen == "category"
- *
- * Tapping the notification launches MainActivity with those extras, which
- * AppRoot then uses to navigate to the right screen (see MainActivity + AppRoot).
- */
+@AndroidEntryPoint
 class WalziFirebaseMessagingService : FirebaseMessagingService() {
+
+    @Inject lateinit var notificationDao: NotificationDao
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        // Send this token to your own backend if you want per-user targeting.
-        // The admin portal's "device token" test mode expects this exact string
-        // to be pasted into its Notifications screen.
     }
 
+    @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
     override fun onMessageReceived(message: RemoteMessage) {
         super.onMessageReceived(message)
 
@@ -38,6 +42,22 @@ class WalziFirebaseMessagingService : FirebaseMessagingService() {
         val screen = message.data["screen"] ?: DeepLinkTarget.HOME
         val wallpaperId = message.data["wallpaperId"]
         val categoryId = message.data["categoryId"]
+        val imageUrl = message.data["imageUrl"]
+
+        serviceScope.launch {
+            notificationDao.insert(
+                NotificationEntity(
+                    id = message.messageId ?: UUID.randomUUID().toString(),
+                    title = title,
+                    body = body,
+                    imageUrl = imageUrl,
+                    screen = screen,
+                    wallpaperId = wallpaperId,
+                    categoryId = categoryId,
+                    receivedAt = System.currentTimeMillis()
+                )
+            )
+        }
 
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP

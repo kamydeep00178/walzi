@@ -1,0 +1,12 @@
+# Hand-written baseline profile: pre-compiles the app's own startup + scrolling code paths at
+# install time, so first launch and first scroll don't run through the interpreter/JIT.
+# (Compose/AndroidX libraries ship their own profiles.)
+#
+# This is deliberately broad. For a tighter profile, generate one with the Baseline Profile
+# Gradle plugin + a Macrobenchmark that launches, scrolls the feed and opens a wallpaper.
+HSPLcom/yunok/walzi/presentation/**;->**(**)**
+HSPLcom/yunok/walzi/data/**;->**(**)**
+HSPLcom/yunok/walzi/di/**;->**(**)**
+HSPLcom/yunok/walzi/WalziApp;->**(**)**
+HSPLcom/yunok/walzi/MainActivity;->**(**)**
+Lcom/yunok/walzi/**;

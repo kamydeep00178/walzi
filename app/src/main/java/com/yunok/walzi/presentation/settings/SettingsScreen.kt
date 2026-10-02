@@ -95,7 +95,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             if (showPrivacyRow) {
                 SettingsLinkRow(
                     icon = Icons.Filled.PrivacyTip,
-                    title = "Ad Privacy /n Options Manage data sharing preferences",
+                    title = "Ad privacy options",
                     onClick = {
                         (ctx as? Activity)?.let { activity ->
                             ConsentManager.showPrivacyOptionsForm(activity)

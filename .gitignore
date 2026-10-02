@@ -32,3 +32,8 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Signing keys - NEVER commit these
+walzi-release
+*.p12
+*.pfx

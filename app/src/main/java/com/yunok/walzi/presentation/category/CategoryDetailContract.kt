@@ -11,12 +11,15 @@ data class CategoryDetailState(
     val wallpapers: List<Wallpaper> = emptyList(),
     val isLoading: Boolean = true,
     val isLoadingMore: Boolean = false,
-    val endReached: Boolean = false
+    val endReached: Boolean = false,
+    /** First load failed and there is nothing cached to show - the UI offers a Retry. */
+    val hasError: Boolean = false
 ) : MviState
 
 sealed interface CategoryDetailIntent : MviIntent {
     data class ToggleFavorite(val wallpaperId: String) : CategoryDetailIntent
     data object LoadNextPage : CategoryDetailIntent
+    data object Retry : CategoryDetailIntent
 }
 
 sealed interface CategoryDetailEffect : MviEffect

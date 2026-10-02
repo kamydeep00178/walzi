@@ -64,9 +64,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import coil.size.Size
 import com.yunok.walzi.domain.model.Wallpaper
 import com.yunok.walzi.domain.model.WallpaperList
+import com.yunok.walzi.presentation.components.ErrorState
+import com.yunok.walzi.util.findActivity
+import com.yunok.walzi.util.thumbMemoryKey
 import com.yunok.walzi.presentation.theme.Accent1
 import com.yunok.walzi.presentation.theme.Accent2
 import com.yunok.walzi.presentation.theme.BgApp
@@ -93,18 +95,27 @@ fun WallpaperDetailScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val activity = LocalContext.current.findActivity()
 
     LaunchedEffect(Unit) {
         viewModel.effect.collect { effect ->
             when (effect) {
                 is WallpaperDetailEffect.ShowMessage -> scope.launch { snackbarHostState.showSnackbar(effect.text) }
+                // Frequency-capped inside InterstitialAdManager; a no-op when ads are disabled.
+                WallpaperDetailEffect.ActionCompleted -> activity?.let(viewModel::showInterstitial)
             }
         }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(BgApp).windowInsetsPadding(WindowInsets.systemBars)) {
-        if (state.isLoading || state.wallpapers.isEmpty()) {
+        if (state.isLoading) {
             CircularProgressIndicator(modifier = Modifier.align(Alignment.Center), color = Accent1)
+        } else if (state.hasError || state.wallpapers.isEmpty()) {
+            WallpaperOverlayTopBar(onBack = onBack, modifier = Modifier.align(Alignment.TopCenter))
+            ErrorState(
+                onRetry = { viewModel.sendIntent(WallpaperDetailIntent.Retry) },
+                modifier = Modifier.align(Alignment.Center)
+            )
         } else {
             val context = LocalContext.current
             val pagerState = rememberPagerState(initialPage = state.initialIndex) { state.wallpapers.size }
@@ -139,17 +150,24 @@ fun WallpaperDetailScreen(
             // vertical swipe. Buttons/text below are a separate fixed overlay in the same Box.
             VerticalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                // Compose the next/previous wallpaper before the swipe reaches it, so it's
+                // already decoded (and not blank) when it slides in. Affordable because each page
+                // decodes at *screen* size, not the source's full resolution.
+                beyondViewportPageCount = 1
             ) { page ->
                 val wallpaper = state.wallpapers[page]
                 AsyncImage(
-                    // Full-screen preview (and, by extension, what Set Wallpaper / Download act
-                    // on) always requests Size.ORIGINAL - never the downsized grid thumbnail decode.
+                    // The preview decodes at the size it's actually shown (Coil measures the
+                    // page), NOT Size.ORIGINAL: a 4K source is ~33 MB decoded and a few of those
+                    // used to evict every grid thumbnail from the shared memory cache. Set
+                    // Wallpaper / Download still act on the full-resolution file (see
+                    // WallpaperSetter / ImageDownloader). The grid's thumbnail paints instantly
+                    // as the placeholder while the sharper image loads.
                     model = remember(wallpaper.imageUrl) {
                         ImageRequest.Builder(context)
                             .data(wallpaper.imageUrl)
-                            .size(Size.ORIGINAL)
-                            .crossfade(true)
+                            .placeholderMemoryCacheKey(thumbMemoryKey(wallpaper.imageUrl))
                             .build()
                     },
                     contentDescription = wallpaper.title,
@@ -169,6 +187,7 @@ fun WallpaperDetailScreen(
 
                 WallpaperOverlayBottomBar(
                     wallpaper = currentWallpaper,
+                    isFavorite = currentWallpaper.id in state.favoriteIds,
                     isApplyingWallpaper = state.isApplyingWallpaper && state.targetWallpaperId == currentWallpaper.id,
                     isDownloading = state.isDownloading,
                     onToggleFavorite = { viewModel.sendIntent(WallpaperDetailIntent.ToggleFavorite(currentWallpaper.id)) },
@@ -253,6 +272,7 @@ private fun WallpaperOverlayTopBar(
 @Composable
 private fun WallpaperOverlayBottomBar(
     wallpaper: Wallpaper,
+    isFavorite: Boolean,
     isApplyingWallpaper: Boolean,
     isDownloading: Boolean,
     onToggleFavorite: () -> Unit,
@@ -286,9 +306,9 @@ private fun WallpaperOverlayBottomBar(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = if (wallpaper.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                     contentDescription = "Favorite",
-                    tint = if (wallpaper.isFavorite) Accent2 else Color.White
+                    tint = if (isFavorite) Accent2 else Color.White
                 )
             }
             Box(

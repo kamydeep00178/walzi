@@ -7,27 +7,25 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
-import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -39,37 +37,47 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.SubcomposeAsyncImage
-import coil.compose.SubcomposeAsyncImageContent
+import androidx.lifecycle.repeatOnLifecycle
+import coil.size.Size
+import com.google.android.gms.ads.nativead.NativeAd
 import com.yunok.walzi.R
+import com.yunok.walzi.ads.AdViewModel
+import com.yunok.walzi.ads.AdsConfig
+import com.yunok.walzi.ads.BannerAdComposable
+import com.yunok.walzi.ads.NativeAdCard
+import com.yunok.walzi.domain.model.Category
 import com.yunok.walzi.domain.model.Wallpaper
 import com.yunok.walzi.presentation.components.CategoryTile
-import com.yunok.walzi.presentation.components.ShimmerPlaceholder
+import com.yunok.walzi.presentation.components.ErrorState
+import com.yunok.walzi.presentation.components.ThumbImage
 import com.yunok.walzi.presentation.components.WallpaperCard
-import com.yunok.walzi.presentation.components.placeholderColorFor
+import com.yunok.walzi.presentation.components.aspectRatioFor
+import com.yunok.walzi.presentation.components.bottomScrim
 import com.yunok.walzi.presentation.theme.Accent3
 import com.yunok.walzi.presentation.theme.BgApp
 import com.yunok.walzi.presentation.theme.BorderColor
@@ -79,13 +87,28 @@ import com.yunok.walzi.presentation.theme.TextPrimary
 import com.yunok.walzi.presentation.theme.TextSecondary
 import com.yunok.walzi.presentation.theme.TextTertiary
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 
-private val ASPECT_RATIOS = listOf(0.55f, 0.62f, 0.5f, 0.68f, 0.58f, 0.72f)
-private fun aspectRatioFor(id: String) = ASPECT_RATIOS[(id.hashCode() and 0x7fffffff) % ASPECT_RATIOS.size]
+/** Left-to-right order and labels of the swipeable tab row - index must match HorizontalPager pages. */
+private val FEED_TABS = listOf(
+    FeedTab.RECENT to "RECENT",
+    FeedTab.COLLECTIONS to "COLLECTIONS",
+    FeedTab.POPULAR to "POPULAR",
+    FeedTab.FAVORITES to "FAVOURITES"
+)
+private val TAB_ORDER = FEED_TABS.map { it.first }
 
-/** Left-to-right page order for the swipeable tab row - index must match HorizontalPager pages. */
-private val TAB_ORDER = listOf(FeedTab.RECENT, FeedTab.COLLECTIONS, FeedTab.POPULAR, FeedTab.FAVORITES)
+/** Start fetching the next page when the last visible item is within this many items of the end. */
+private const val PREFETCH_DISTANCE = 6
+
+/** The single native ad sits in the feed after this many wallpapers. */
+private const val NATIVE_AD_AFTER = 8
+
+/** Decode targets matched to each slot's on-screen size, so memory stays proportional to what's visible. */
+private val FEATURED_IMAGE_SIZE = Size(1000, 840)
+private val COLLECTION_PREVIEW_SIZE = Size(300, 160)
 
 /** Maps the selected feed tab to the "source" query param WallpaperDetail uses to keep paging. */
 private fun FeedTab.toSourceParam() = when (this) {
@@ -102,127 +125,174 @@ fun HomeScreen(
     onWallpaperClick: (wallpaperId: String, source: String) -> Unit,
     onCategoryClick: (String) -> Unit,
     onOpenList: (String) -> Unit,
-    onOpenSearch: () -> Unit,          // <- new
-    onOpenNotifications: () -> Unit,   // <- new
-    viewModel: HomeViewModel = hiltViewModel()
+    onOpenSearch: () -> Unit,
+    onOpenNotifications: () -> Unit,
+    viewModel: HomeViewModel = hiltViewModel(),
+    adViewModel: AdViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val pagerState = rememberPagerState(initialPage = TAB_ORDER.indexOf(state.selectedTab)) { TAB_ORDER.size }
     val scope = rememberCoroutineScope()
 
-    fun goToTab(tab: FeedTab) {
-        scope.launch { pagerState.animateScrollToPage(TAB_ORDER.indexOf(tab)) }
+    val goToTab: (FeedTab) -> Unit = remember(pagerState, scope) {
+        { tab -> scope.launch { pagerState.animateScrollToPage(TAB_ORDER.indexOf(tab)) } }
     }
 
-    // Swipe settles on a new page -> load that tab, same as if it had been tapped.
-    LaunchedEffect(pagerState.currentPage) {
-        val tab = TAB_ORDER[pagerState.currentPage]
-        if (tab != state.selectedTab) {
-            viewModel.sendIntent(HomeIntent.SelectTab(tab))
+    // settledPage (not currentPage): tapping a far tab animates *through* the pages in between,
+    // and currentPage would report - and trigger loads for - every one of them on the way.
+    LaunchedEffect(pagerState, viewModel) {
+        snapshotFlow { pagerState.settledPage }.collect { page ->
+            viewModel.sendIntent(HomeIntent.SelectTab(TAB_ORDER[page]))
         }
     }
 
     Column(modifier = Modifier.fillMaxSize().background(BgApp).windowInsetsPadding(WindowInsets.systemBars)) {
-        TopAppBarRow(onOpenDrawer = onOpenDrawer,onOpenSearch = onOpenSearch, onOpenNotifications = onOpenNotifications)
-        FeedTabRow(
-            selected = TAB_ORDER[pagerState.currentPage],
-            onSelect = { tab -> goToTab(tab) }
-        )
+        TopAppBarRow(onOpenDrawer = onOpenDrawer, onOpenSearch = onOpenSearch, onOpenNotifications = onOpenNotifications)
+        // currentPage is read *inside* FeedTabRow (via the lambda), so a page change recomposes
+        // just the tab row, not this whole screen.
+        FeedTabRow(selectedIndex = { pagerState.currentPage }, onSelect = goToTab)
 
         HorizontalPager(
             state = pagerState,
-            modifier = Modifier.weight(1f).fillMaxSize()
+            modifier = Modifier.weight(1f).fillMaxWidth()
         ) { page ->
-            val pageTab = TAB_ORDER[page]
+            val tab = TAB_ORDER[page]
 
-            when {
-                pageTab != state.selectedTab || state.isLoading -> Box(
-                    Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = Accent3)
+            if (tab == FeedTab.COLLECTIONS) {
+                CollectionsGrid(categories = state.categories, onCategoryClick = onCategoryClick)
+            } else {
+                // Per-tab lambdas capture only stable values (tab / viewModel) - never `state` -
+                // so unrelated state changes don't invalidate every visible card.
+                val onClick = remember(tab, onWallpaperClick) {
+                    { id: String -> onWallpaperClick(id, tab.toSourceParam()) }
                 }
+                val onLoadMore = remember(tab, viewModel) { { viewModel.sendIntent(HomeIntent.LoadNextPage(tab)) } }
+                val onRetry = remember(tab, viewModel) { { viewModel.sendIntent(HomeIntent.Retry(tab)) } }
 
-                pageTab == FeedTab.COLLECTIONS -> CollectionsGrid(
-                    categories = state.categories,
-                    onCategoryClick = onCategoryClick
-                )
-
-                pageTab == FeedTab.FAVORITES && state.wallpapers.isEmpty() -> Column(Modifier.fillMaxSize()) {
-                    SectionHeader(
-                        modifier = Modifier.padding(16.dp),
-                        title = { Text("FAVOURITES", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
-                        subtitle = "Your saved wallpapers",
-                        showAccentBar = true
-                    )
-                    Box(Modifier.weight(1f).fillMaxSize(), contentAlignment = Alignment.Center) {
-                        EmptyFavoritesContent()
-                    }
-                }
-
-                else -> WallpaperMasonry(
-                    wallpapers = state.wallpapers,
-                    isLoadingMore = state.isLoadingMore,
-                    onLoadMore = { viewModel.sendIntent(HomeIntent.LoadNextPage) },
-                    onWallpaperClick = { id -> onWallpaperClick(id, state.selectedTab.toSourceParam()) },
-                    headerContent = when (pageTab) {
-                        FeedTab.RECENT -> {
-                            {
-                                Column {
-                                    FeaturedCarousel(
-                                        wallpapers = state.featuredWallpapers,
-                                        onWallpaperClick = { id -> onWallpaperClick(id, state.selectedTab.toSourceParam()) },
-                                        onViewAll = { goToTab(FeedTab.POPULAR) }
-                                    )
-                                    YourCollectionsSection(
-                                        playlists = state.playlists,
-                                        onOpenList = onOpenList,
-                                        modifier = Modifier.padding(top = 20.dp)
-                                    )
-                                    Text(
-                                        "DISCOVER",
-                                        color = TextTertiary,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 11.sp,
-                                        modifier = Modifier.padding(top = 20.dp, bottom = 10.dp)
-                                    )
-                                }
-                            }
-                        }
-                        FeedTab.POPULAR -> {
-                            {
-                                SectionHeader(
-                                    modifier = Modifier.padding(bottom = 6.dp),
-                                    title = {
-                                        Row {
-                                            Text("POPULAR", color = Accent3, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                            Text(" WALLPAPERS", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                        }
-                                    },
-                                    subtitle = "Top wallpapers loved by everyone"
-                                )
-                            }
-                        }
-                        FeedTab.FAVORITES -> {
-                            {
-                                SectionHeader(
-                                    modifier = Modifier.padding(bottom = 6.dp),
-                                    title = { Text("FAVOURITES", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
-                                    subtitle = "Your saved wallpapers",
-                                    showAccentBar = true
-                                )
-                            }
-                        }
-                        FeedTab.COLLECTIONS -> null
-                    }
+                FeedPage(
+                    tab = tab,
+                    tabState = state.tab(tab),
+                    featured = state.featuredWallpapers,
+                    playlists = state.playlists,
+                    nativeAd = adViewModel.nativeAd,
+                    onWallpaperClick = onClick,
+                    onLoadMore = onLoadMore,
+                    onRetry = onRetry,
+                    onOpenList = onOpenList,
+                    onViewAllFeatured = { goToTab(FeedTab.POPULAR) }
                 )
             }
+        }
+
+        // No-op (renders nothing) unless AdsConfig.ADS_ENABLED.
+        BannerAdComposable()
+    }
+}
+
+@Composable
+private fun FeedPage(
+    tab: FeedTab,
+    tabState: TabState,
+    featured: List<Wallpaper>,
+    playlists: List<PlaylistPreview>,
+    nativeAd: NativeAd?,
+    onWallpaperClick: (String) -> Unit,
+    onLoadMore: () -> Unit,
+    onRetry: () -> Unit,
+    onOpenList: (String) -> Unit,
+    onViewAllFeatured: () -> Unit
+) {
+    when {
+        tabState.isLoading && tabState.wallpapers.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = Accent3)
+        }
+
+        tabState.hasError && tabState.wallpapers.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            ErrorState(onRetry = onRetry)
+        }
+
+        tab == FeedTab.FAVORITES && tabState.wallpapers.isEmpty() -> Column(Modifier.fillMaxSize()) {
+            SectionHeader(
+                modifier = Modifier.padding(16.dp),
+                title = { Text("FAVOURITES", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+                subtitle = "Your saved wallpapers",
+                showAccentBar = true
+            )
+            Box(Modifier.weight(1f).fillMaxSize(), contentAlignment = Alignment.Center) {
+                EmptyFavoritesContent()
+            }
+        }
+
+        else -> {
+            val header: (@Composable () -> Unit)? = when (tab) {
+                FeedTab.RECENT -> {
+                    {
+                        Column {
+                            FeaturedCarousel(
+                                wallpapers = featured,
+                                onWallpaperClick = onWallpaperClick,
+                                onViewAll = onViewAllFeatured
+                            )
+                            YourCollectionsSection(
+                                playlists = playlists,
+                                onOpenList = onOpenList,
+                                modifier = Modifier.padding(top = 20.dp)
+                            )
+                            Text(
+                                "DISCOVER",
+                                color = TextTertiary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(top = 20.dp, bottom = 10.dp)
+                            )
+                        }
+                    }
+                }
+
+                FeedTab.POPULAR -> {
+                    {
+                        SectionHeader(
+                            modifier = Modifier.padding(bottom = 6.dp),
+                            title = {
+                                Row {
+                                    Text("POPULAR", color = Accent3, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Text(" WALLPAPERS", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                }
+                            },
+                            subtitle = "Top wallpapers loved by everyone"
+                        )
+                    }
+                }
+
+                FeedTab.FAVORITES -> {
+                    {
+                        SectionHeader(
+                            modifier = Modifier.padding(bottom = 6.dp),
+                            title = { Text("FAVOURITES", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+                            subtitle = "Your saved wallpapers",
+                            showAccentBar = true
+                        )
+                    }
+                }
+
+                FeedTab.COLLECTIONS -> null
+            }
+
+            WallpaperMasonry(
+                wallpapers = tabState.wallpapers,
+                isLoadingMore = tabState.isLoadingMore,
+                // The native ad only belongs in the two infinite feeds, not the bounded Favourites list.
+                nativeAd = if (tab == FeedTab.FAVORITES) null else nativeAd,
+                onLoadMore = onLoadMore,
+                onWallpaperClick = onWallpaperClick,
+                headerContent = header
+            )
         }
     }
 }
 
 @Composable
-private fun TopAppBarRow(onOpenDrawer: () -> Unit,onOpenSearch: () -> Unit, onOpenNotifications: () -> Unit) {
+private fun TopAppBarRow(onOpenDrawer: () -> Unit, onOpenSearch: () -> Unit, onOpenNotifications: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -254,19 +324,14 @@ private fun TopAppBarRow(onOpenDrawer: () -> Unit,onOpenSearch: () -> Unit, onOp
 }
 
 @Composable
-private fun FeedTabRow(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
-    val tabs = listOf(
-        FeedTab.RECENT to "Recent",
-        FeedTab.COLLECTIONS to "Collections",
-        FeedTab.POPULAR to "Popular",
-        FeedTab.FAVORITES to "Favourites"
-    )
+private fun FeedTabRow(selectedIndex: () -> Int, onSelect: (FeedTab) -> Unit) {
+    val selected = TAB_ORDER[selectedIndex()]
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp)
     ) {
-        tabs.forEach { (tab, label) ->
+        FEED_TABS.forEach { (tab, label) ->
             val active = tab == selected
             Column(
                 modifier = Modifier
@@ -275,7 +340,7 @@ private fun FeedTabRow(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = label.uppercase(),
+                    text = label,
                     color = if (active) TextPrimary else TextTertiary,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.sp,
@@ -362,6 +427,9 @@ private fun EmptyFavoritesContent() {
  * peek in from the screen edges (via HorizontalPager's contentPadding), and it snaps forward
  * one page every ~3.2s unless the user is actively dragging it. Fed the day's country+category
  * pick from HomeViewModel (see WallpaperRepository.observeFeaturedWallpapers).
+ *
+ * Autoplay only runs while the screen is RESUMED - it used to keep ticking (and animating)
+ * with the app in the background.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -373,13 +441,16 @@ private fun FeaturedCarousel(
     if (wallpapers.isEmpty()) return
 
     val pagerState = rememberPagerState(pageCount = { wallpapers.size })
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    LaunchedEffect(pagerState, wallpapers.size) {
-        while (true) {
-            delay(3200)
-            if (!pagerState.isScrollInProgress) {
-                val next = (pagerState.currentPage + 1) % wallpapers.size
-                pagerState.animateScrollToPage(next)
+    LaunchedEffect(pagerState, wallpapers.size, lifecycleOwner) {
+        if (wallpapers.size < 2) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                delay(3200)
+                if (!pagerState.isScrollInProgress) {
+                    pagerState.animateScrollToPage((pagerState.currentPage + 1) % wallpapers.size)
+                }
             }
         }
     }
@@ -405,29 +476,14 @@ private fun FeaturedCarousel(
                     .clip(RoundedCornerShape(18.dp))
                     .clickable { onWallpaperClick(wallpaper.id) }
             ) {
-                SubcomposeAsyncImage(
-                    model = wallpaper.imageUrl,
+                ThumbImage(
+                    url = wallpaper.imageUrl,
+                    placeholderKey = wallpaper.id,
+                    size = FEATURED_IMAGE_SIZE,
                     contentDescription = wallpaper.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                    loading = {
-                        ShimmerPlaceholder(baseColor = placeholderColorFor(wallpaper.id), modifier = Modifier.fillMaxSize())
-                    },
-                    error = {
-                        ShimmerPlaceholder(baseColor = placeholderColorFor(wallpaper.id), modifier = Modifier.fillMaxSize())
-                    },
-                    success = { SubcomposeAsyncImageContent() }
+                    modifier = Modifier.fillMaxSize()
                 )
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f)),
-                                startY = 0.35f
-                            )
-                        )
-                )
+                Box(modifier = Modifier.matchParentSize().bottomScrim(startFraction = 0.35f, maxAlpha = 0.7f))
                 Column(modifier = Modifier.align(Alignment.BottomStart).padding(16.dp)) {
                     Box(
                         modifier = Modifier
@@ -535,7 +591,7 @@ private fun YourCollectionsSection(
 
 @Composable
 private fun CollectionCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     iconTint: Color,
     title: String,
     count: Int,
@@ -577,22 +633,15 @@ private fun CollectionCard(
                 modifier = Modifier.padding(top = 10.dp)
             ) {
                 previewImageUrls.take(3).forEach { url ->
-                    Box(
+                    ThumbImage(
+                        url = url,
+                        placeholderKey = url,
+                        size = COLLECTION_PREVIEW_SIZE,
                         modifier = Modifier
                             .weight(1f)
                             .height(46.dp)
                             .clip(RoundedCornerShape(8.dp))
-                    ) {
-                        SubcomposeAsyncImage(
-                            model = url,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                            loading = { ShimmerPlaceholder(baseColor = placeholderColorFor(url), modifier = Modifier.fillMaxSize()) },
-                            error = { ShimmerPlaceholder(baseColor = placeholderColorFor(url), modifier = Modifier.fillMaxSize()) },
-                            success = { SubcomposeAsyncImageContent() }
-                        )
-                    }
+                    )
                 }
             }
         }
@@ -603,26 +652,31 @@ private fun CollectionCard(
 private fun WallpaperMasonry(
     wallpapers: List<Wallpaper>,
     isLoadingMore: Boolean,
+    nativeAd: NativeAd?,
     onLoadMore: () -> Unit,
     onWallpaperClick: (String) -> Unit,
     headerContent: (@Composable () -> Unit)? = null
 ) {
-    val gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState()
+    val gridState = rememberLazyStaggeredGridState()
+    val currentOnLoadMore by rememberUpdatedState(onLoadMore)
 
-    // Fires "load next page" whenever the user is within 6 items of the end - re-evaluated on
-    // every scroll AND every time the list grows (via the wallpapers.size key), not just once
-    // per true/false transition. A plain LaunchedEffect(booleanFlag) would only fire the very
-    // first time the threshold is crossed - if the user keeps scrolling fast enough to stay
-    // within that threshold across multiple loaded pages, it would never fire again, silently
-    // stalling pagination with no loader shown.
+    // Emits true whenever the user is within PREFETCH_DISTANCE items of the end. The effect is
+    // keyed on wallpapers.size so it restarts (and re-evaluates immediately) every time a page
+    // lands - a plain "fire once per false->true transition" would stall if the user is still
+    // near the end after a page loads, silently ending pagination with no loader shown.
     LaunchedEffect(gridState, wallpapers.size) {
-        snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
-            .collect { lastVisible ->
-                if (wallpapers.isNotEmpty() && lastVisible >= wallpapers.size - 6) {
-                    onLoadMore()
-                }
-            }
+        if (wallpapers.isEmpty()) return@LaunchedEffect
+        snapshotFlow {
+            val info = gridState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - PREFETCH_DISTANCE
+        }
+            .distinctUntilChanged()
+            .filter { nearEnd -> nearEnd }
+            .collect { currentOnLoadMore() }
     }
+
+    val showAd = AdsConfig.ADS_ENABLED && nativeAd != null && wallpapers.size > NATIVE_AD_AFTER
+    val countBeforeAd = if (showAd) NATIVE_AD_AFTER else wallpapers.size
 
     LazyVerticalStaggeredGrid(
         columns = StaggeredGridCells.Fixed(2),
@@ -633,18 +687,38 @@ private fun WallpaperMasonry(
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         headerContent?.let { content ->
-            item(span = StaggeredGridItemSpan.FullLine) { content() }
+            item(key = "header", span = StaggeredGridItemSpan.FullLine, contentType = "header") { content() }
         }
 
-        items(wallpapers, key = { it.id }) { wallpaper ->
+        items(count = countBeforeAd, key = { wallpapers[it].id }, contentType = { "wallpaper" }) { index ->
+            val wallpaper = wallpapers[index]
             WallpaperCard(
                 wallpaper = wallpaper,
                 aspectRatio = aspectRatioFor(wallpaper.id),
                 onClick = { onWallpaperClick(wallpaper.id) }
             )
         }
+
+        if (showAd) {
+            item(key = "native_ad", span = StaggeredGridItemSpan.FullLine, contentType = "native_ad") {
+                NativeAdCard(nativeAd = nativeAd)
+            }
+            items(
+                count = wallpapers.size - countBeforeAd,
+                key = { wallpapers[countBeforeAd + it].id },
+                contentType = { "wallpaper" }
+            ) { offset ->
+                val wallpaper = wallpapers[countBeforeAd + offset]
+                WallpaperCard(
+                    wallpaper = wallpaper,
+                    aspectRatio = aspectRatioFor(wallpaper.id),
+                    onClick = { onWallpaperClick(wallpaper.id) }
+                )
+            }
+        }
+
         if (isLoadingMore) {
-            item(span = StaggeredGridItemSpan.FullLine) {
+            item(key = "loading_more", span = StaggeredGridItemSpan.FullLine, contentType = "loading") {
                 Box(Modifier.fillMaxWidth().padding(vertical = 20.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(modifier = Modifier.size(22.dp), color = Accent3, strokeWidth = 2.dp)
                 }
@@ -655,7 +729,7 @@ private fun WallpaperMasonry(
 
 @Composable
 private fun CollectionsGrid(
-    categories: List<com.yunok.walzi.domain.model.Category>,
+    categories: List<Category>,
     onCategoryClick: (String) -> Unit
 ) {
     LazyVerticalGrid(

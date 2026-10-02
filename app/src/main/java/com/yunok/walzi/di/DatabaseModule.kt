@@ -2,6 +2,8 @@ package com.yunok.walzi.di
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.yunok.walzi.data.local.WalziDatabase
 import com.yunok.walzi.data.local.dao.CategoryDao
 import com.yunok.walzi.data.local.dao.NotificationDao
@@ -18,11 +20,26 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object DatabaseModule {
 
+    /**
+     * v4 -> v5: wallpaper_cache gains `position` (Firestore order). The cache is disposable, so
+     * it's simply emptied and refetched - but done as a real migration so the notification
+     * history that shares this database survives the upgrade instead of being wiped by the
+     * destructive fallback.
+     */
+    private val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE wallpaper_cache ADD COLUMN position INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("DELETE FROM wallpaper_cache")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideWalziDatabase(@ApplicationContext context: Context): WalziDatabase =
         Room.databaseBuilder(context, WalziDatabase::class.java, "walzi.db")
-            .fallbackToDestructiveMigration()
+            .addMigrations(MIGRATION_4_5)
+            // Only reached for installs older than v4 (no migration path) - see note above.
+            .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
 
     @Provides

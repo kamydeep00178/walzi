@@ -46,14 +46,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yunok.walzi.domain.model.Tag
 import com.yunok.walzi.domain.model.Wallpaper
 import com.yunok.walzi.presentation.components.WallpaperCard
+import com.yunok.walzi.presentation.components.aspectRatioFor
 import com.yunok.walzi.presentation.theme.Accent3
 import com.yunok.walzi.presentation.theme.BgApp
 import com.yunok.walzi.presentation.theme.Elevated
 import com.yunok.walzi.presentation.theme.TextPrimary
 import com.yunok.walzi.presentation.theme.TextTertiary
 
-private val ASPECT_RATIOS = listOf(0.55f, 0.62f, 0.5f, 0.68f, 0.58f, 0.72f)
-private fun aspectRatioFor(id: String) = ASPECT_RATIOS[(id.hashCode() and 0x7fffffff) % ASPECT_RATIOS.size]
 
 @Composable
 fun SearchScreen(

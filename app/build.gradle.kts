@@ -5,6 +5,31 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     alias(libs.plugins.google.services)
+    alias(libs.plugins.firebase.crashlytics)
+}
+
+// Google's sample AdMob *app* id. Fine for debug builds; must never ship in a release.
+val testAdmobAppId = "ca-app-pub-3940256099942544~3347511713"
+
+// The real AdMob app id for release builds, set in gradle.properties (ADMOB_APP_ID_RELEASE).
+// It must belong to the same AdMob app as the ad *unit* ids in ads/AdManager.kt.
+val releaseAdmobAppId: String = (findProperty("ADMOB_APP_ID_RELEASE") as String?) ?: testAdmobAppId
+
+gradle.taskGraph.whenReady {
+    val buildingRelease = allTasks.any { it.path == ":app:bundleRelease" || it.path == ":app:assembleRelease" }
+    if (buildingRelease && releaseAdmobAppId == testAdmobAppId) {
+        logger.warn(
+            "\n⚠️  RELEASE BUILD IS USING GOOGLE'S TEST ADMOB APP ID.\n" +
+                "    Set ADMOB_APP_ID_RELEASE in gradle.properties to your real AdMob app id\n" +
+                "    (ca-app-pub-4136650480208705~XXXXXXXXXX), or set ADS_ENABLED = false in AdsConfig.kt.\n"
+        )
+    }
+}
+
+// Tell the Compose compiler our immutable-by-convention model/state classes and Kotlin
+// collections are stable, so composables taking them can skip recomposition.
+composeCompiler {
+    stabilityConfigurationFiles.add(layout.projectDirectory.file("compose_stability.conf"))
 }
 
 android {
@@ -15,7 +40,7 @@ android {
         applicationId = "com.yunok.walzi"
         minSdk = 24
         targetSdk = 36
-        versionCode = 6
+        versionCode = 7
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -23,7 +48,7 @@ android {
     buildTypes {
         release {
             buildConfigField("Boolean", "DEBUG_BUILD", "false")
-            manifestPlaceholders["admobAppId"] = "ca-app-pub-3940256099942544~3347511713"
+            manifestPlaceholders["admobAppId"] = releaseAdmobAppId
 
             isMinifyEnabled = true
             isShrinkResources = true
@@ -34,7 +59,7 @@ android {
         }
         debug {
             buildConfigField("Boolean", "DEBUG_BUILD", "true")
-            manifestPlaceholders["admobAppId"] = "ca-app-pub-3940256099942544~3347511713"
+            manifestPlaceholders["admobAppId"] = testAdmobAppId
 
             isMinifyEnabled = false
         }
@@ -94,12 +119,16 @@ dependencies {
     implementation(libs.firebase.firestore.ktx)
     implementation(libs.firebase.messaging.ktx)
     implementation(libs.firebase.analytics.ktx)
+    implementation(libs.firebase.crashlytics)
 
     implementation(libs.coil.compose)
 
     implementation(libs.androidx.datastore.preferences)
 
     implementation(libs.accompanist.systemuicontroller)
+
+    // Lets the baseline profile (src/main/baseline-prof.txt) be applied to sideloaded / pre-Play installs too.
+    implementation(libs.androidx.profileinstaller)
 
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.hilt.work)

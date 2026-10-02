@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface WallpaperCacheDao {
 
-    @Query("SELECT * FROM wallpaper_cache WHERE bucket = :bucket ORDER BY priority DESC, createdAt DESC")
+    @Query("SELECT * FROM wallpaper_cache WHERE bucket = :bucket ORDER BY position ASC, priority DESC, createdAt DESC")
     fun observeByBucket(bucket: String): Flow<List<WallpaperCacheEntity>>
 
     @Query("SELECT COUNT(*) FROM wallpaper_cache WHERE bucket = :bucket")

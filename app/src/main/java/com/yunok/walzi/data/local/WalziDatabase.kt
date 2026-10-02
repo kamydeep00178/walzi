@@ -14,7 +14,7 @@ import com.yunok.walzi.data.local.entity.WallpaperCacheEntity
 
 @Database(
     entities = [CategoryEntity::class, WallpaperCacheEntity::class, NotificationEntity::class, TagEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

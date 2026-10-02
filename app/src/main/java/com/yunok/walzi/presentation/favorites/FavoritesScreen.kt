@@ -37,8 +37,8 @@ import com.yunok.walzi.presentation.theme.BgApp
 import com.yunok.walzi.presentation.theme.TextPrimary
 import com.yunok.walzi.presentation.theme.TextTertiary
 
-private val ASPECT_RATIOS = listOf(0.75f, 0.85f, 1f, 0.62f, 0.95f, 0.7f)
-private fun aspectRatioFor(id: String) = ASPECT_RATIOS[(id.hashCode() and 0x7fffffff) % ASPECT_RATIOS.size]
+private fun aspectRatioFor(id: String) =
+    com.yunok.walzi.presentation.components.aspectRatioFor(id, com.yunok.walzi.presentation.components.GalleryAspectRatios)
 
 @Composable
 fun FavoritesScreen(

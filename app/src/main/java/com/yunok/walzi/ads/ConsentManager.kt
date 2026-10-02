@@ -45,6 +45,9 @@ object ConsentManager {
         activity   : Activity,
         onComplete : (canRequestAds: Boolean) -> Unit
     ) {
+        // Ads switched off: no consent prompt, no callback - nothing will ever request ads.
+        if (!AdsConfig.ADS_ENABLED) return
+
         val paramsBuilder = ConsentRequestParameters.Builder()
             .setTagForUnderAgeOfConsent(false)
 
@@ -73,6 +76,10 @@ object ConsentManager {
 
         val params = paramsBuilder.build()
         val consentInfo = UserMessagingPlatform.getConsentInformation(activity)
+
+        // Returning user who already gave consent: start the SDK right away instead of waiting
+        // for the network round-trip below (Google's recommended UMP flow).
+        if (consentInfo.canRequestAds()) onComplete(true)
 
         consentInfo.requestConsentInfoUpdate(
             activity, params,
@@ -117,8 +124,9 @@ object ConsentManager {
      * Show a "Privacy Settings" button only when this returns true.
      */
     fun isPrivacyOptionsRequired(context: Context): Boolean =
-        UserMessagingPlatform.getConsentInformation(context)
-            .privacyOptionsRequirementStatus ==
+        AdsConfig.ADS_ENABLED &&
+            UserMessagingPlatform.getConsentInformation(context)
+                .privacyOptionsRequirementStatus ==
                 ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED
 
     fun showPrivacyOptionsForm(activity: Activity, onDismiss: () -> Unit = {}) {

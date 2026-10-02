@@ -42,6 +42,10 @@ class InterstitialAdManager @Inject constructor() {
 
     /** Pre-load the ad. Call this early (e.g. in LaunchedEffect on screen open). */
     fun load(context: Context) {
+        if (!AdsConfig.ADS_ENABLED) return
+        // Requests made before the SDK finished initialising (e.g. consent still pending) are
+        // dropped; show() re-requests on demand and AdViewModel preloads once init completes.
+        if (!AdManager.isInitialized.value) return
         if (isLoading || interstitialAd != null) return
         isLoading = true
 
@@ -74,8 +78,10 @@ class InterstitialAdManager @Inject constructor() {
      * should treat onDismissed as "proceed with whatever comes next" in all
      * three cases, without needing to know which one happened.
      */
-    fun show(activity: Activity, isPremium: Boolean, onDismissed: () -> Unit = {}) {
-        if (isPremium) { onDismissed(); return }
+    fun show(activity: Activity, isPremium: Boolean = false, onDismissed: () -> Unit = {}) {
+        // Ads switched off (or premium): proceed immediately and, importantly, don't advance
+        // the frequency counter - otherwise re-enabling ads later would start mid-cycle.
+        if (!AdsConfig.ADS_ENABLED || isPremium) { onDismissed(); return }
 
         val triggerCount = incrementAndGetTriggerCount(activity)
         val shouldShowThisTime = triggerCount % SHOW_EVERY_N_TRIGGERS == 1
@@ -89,7 +95,7 @@ class InterstitialAdManager @Inject constructor() {
         val ad = interstitialAd
         if (ad == null) {
             Log.d(TAG, "This trigger should show an ad, but none is loaded yet — showing content immediately")
-            load(activity)
+            load(activity.applicationContext)
             onDismissed()
             return
         }
@@ -98,7 +104,7 @@ class InterstitialAdManager @Inject constructor() {
             override fun onAdDismissedFullScreenContent() {
                 Log.d(TAG, "Interstitial dismissed")
                 interstitialAd = null
-                load(activity)   // pre-load next one
+                load(activity.applicationContext)   // pre-load next one
                 onDismissed()
             }
             override fun onAdFailedToShowFullScreenContent(error: AdError) {

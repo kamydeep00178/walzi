@@ -14,6 +14,11 @@ data class WallpaperDetailState(
     val isLoading: Boolean = true,
     val isLoadingMore: Boolean = false,
     val endReached: Boolean = false,
+    /** The initial load failed (or produced nothing) - the UI offers a Retry. */
+    val hasError: Boolean = false,
+    /** Kept separately from [wallpapers] so a favorite toggle updates one Set instead of
+     *  rewriting every item in the pager's list. */
+    val favoriteIds: Set<String> = emptySet(),
     val showTargetSheet: Boolean = false,
     /** Which wallpaper (by id) the open sheet / in-flight set-wallpaper action applies to. */
     val targetWallpaperId: String? = null,
@@ -29,6 +34,8 @@ data class WallpaperDetailState(
 sealed interface WallpaperDetailIntent : MviIntent {
     /** Fired when the pager scrolls near the end of what's loaded - fetches the next page. */
     data object LoadNextPage : WallpaperDetailIntent
+    /** Retry button after the initial load failed. */
+    data object Retry : WallpaperDetailIntent
     data class ToggleFavorite(val wallpaperId: String) : WallpaperDetailIntent
     data class OpenSetWallpaperSheet(val wallpaperId: String) : WallpaperDetailIntent
     data object DismissSetWallpaperSheet : WallpaperDetailIntent
@@ -45,4 +52,6 @@ sealed interface WallpaperDetailIntent : MviIntent {
 
 sealed interface WallpaperDetailEffect : MviEffect {
     data class ShowMessage(val text: String) : WallpaperDetailEffect
+    /** A wallpaper was just set / saved successfully - a natural (frequency-capped) moment for an interstitial. */
+    data object ActionCompleted : WallpaperDetailEffect
 }

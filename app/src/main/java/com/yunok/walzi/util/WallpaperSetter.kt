@@ -5,9 +5,9 @@ import android.content.Context
 import android.graphics.drawable.BitmapDrawable
 import android.os.Build
 import coil.imageLoader
-import coil.request.ImageRequest
-import coil.size.Size
+import coil.request.ErrorResult
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -20,19 +20,13 @@ class WallpaperSetter @Inject constructor(
     suspend fun setWallpaper(imageUrl: String, target: WallpaperTarget): Result<Unit> =
         withContext(Dispatchers.IO) {
             try {
-                // Reuses the app-wide cached ImageLoader (see WalziApp.newImageLoader) instead
-                // of spinning up a fresh one - if the user just viewed this wallpaper full-screen,
-                // this hits cache instead of re-downloading. Size.ORIGINAL guarantees we set the
-                // actual full-resolution image, never a downsampled grid-thumbnail decode.
-                val request = ImageRequest.Builder(context)
-                    .data(imageUrl)
-                    .size(Size.ORIGINAL)
-                    .allowHardware(false) // need a software bitmap to hand to WallpaperManager
-                    .build()
-                val drawable = context.imageLoader.execute(request).drawable
-                    ?: return@withContext Result.failure(IllegalStateException("Could not load image"))
-                val bitmap = (drawable as? BitmapDrawable)?.bitmap
-                    ?: return@withContext Result.failure(IllegalStateException("Unsupported image format"))
+                // Same app-wide ImageLoader (disk cache shared with the preview, so no
+                // re-download) but a bounded, memory-cache-free decode - see wallpaperBitmapRequest.
+                val result = context.imageLoader.execute(context.wallpaperBitmapRequest(imageUrl))
+                val bitmap = (result.drawable as? BitmapDrawable)?.bitmap
+                    ?: return@withContext Result.failure(
+                        (result as? ErrorResult)?.throwable ?: IllegalStateException("Could not load image")
+                    )
 
                 val wallpaperManager = WallpaperManager.getInstance(context)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -47,6 +41,11 @@ class WallpaperSetter @Inject constructor(
                     wallpaperManager.setBitmap(bitmap)
                 }
                 Result.success(Unit)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: OutOfMemoryError) {
+                // An Error, not an Exception - without this it would crash the process.
+                Result.failure(IllegalStateException("Not enough memory to set this wallpaper", e))
             } catch (e: Exception) {
                 Result.failure(e)
             }

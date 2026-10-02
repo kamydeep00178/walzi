@@ -33,6 +33,16 @@ class AutoRotateWorker @AssistedInject constructor(
             ?: return Result.success() // active list is empty - nothing to do, not a failure
 
         val outcome = wallpaperSetter.setWallpaper(wallpaper.imageUrl, settings.target)
-        return if (outcome.isSuccess) Result.success() else Result.retry()
+        return when {
+            outcome.isSuccess -> Result.success()
+            // Retry transient failures (network), but give up eventually: an image that can
+            // never be applied would otherwise be retried with backoff forever.
+            runAttemptCount < MAX_ATTEMPTS -> Result.retry()
+            else -> Result.failure()
+        }
+    }
+
+    private companion object {
+        const val MAX_ATTEMPTS = 3
     }
 }

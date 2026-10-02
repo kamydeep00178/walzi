@@ -1,15 +1,16 @@
 package com.yunok.walzi.presentation.category
 
 import androidx.lifecycle.SavedStateHandle
-import androidx.lifecycle.viewModelScope
 import com.yunok.walzi.domain.model.WallpaperCursor
 import com.yunok.walzi.domain.model.WallpaperSource
 import com.yunok.walzi.domain.model.cacheBucket
+import com.yunok.walzi.domain.model.toCursor
 import com.yunok.walzi.domain.repository.WallpaperRepository
 import com.yunok.walzi.presentation.common.BaseViewModel
+import com.yunok.walzi.presentation.common.runSuspendCatching
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.catch
 import javax.inject.Inject
 
 @HiltViewModel
@@ -19,23 +20,21 @@ class CategoryDetailViewModel @Inject constructor(
 ) : BaseViewModel<CategoryDetailIntent, CategoryDetailState, CategoryDetailEffect>(CategoryDetailState()) {
 
     private val categoryId: String = savedStateHandle.get<String>("categoryId").orEmpty()
+    private val source = WallpaperSource.CategoryWallpapers(categoryId)
     private var cursor: WallpaperCursor? = null
     private var hasStartedLivePagination = false
     private var cacheCollectionJob: Job? = null
 
     init {
         setState { copy(categoryId = categoryId) }
-        viewModelScope.launch {
-            repository.observeCategories().collect { categories ->
-                categories.firstOrNull { it.id == categoryId }?.let { match ->
-                    setState { copy(categoryName = match.name) }
+        launchSafely {
+            repository.observeCategories()
+                .catch { }
+                .collect { categories ->
+                    categories.firstOrNull { it.id == categoryId }?.let { match ->
+                        setState { copy(categoryName = match.name) }
+                    }
                 }
-            }
-        }
-        viewModelScope.launch {
-            repository.observeFavoriteIds().collect { favoriteIds ->
-                setState { copy(wallpapers = wallpapers.map { it.copy(isFavorite = favoriteIds.contains(it.id)) }) }
-            }
         }
         loadFirstPage()
     }
@@ -44,6 +43,7 @@ class CategoryDetailViewModel @Inject constructor(
         when (intent) {
             is CategoryDetailIntent.ToggleFavorite -> repository.toggleFavorite(intent.wallpaperId)
             CategoryDetailIntent.LoadNextPage -> loadNextPage()
+            CategoryDetailIntent.Retry -> loadFirstPage()
         }
     }
 
@@ -51,41 +51,55 @@ class CategoryDetailViewModel @Inject constructor(
         cacheCollectionJob?.cancel()
         cursor = null
         hasStartedLivePagination = false
-        setState { copy(isLoading = true, wallpapers = emptyList(), endReached = false) }
+        setState { copy(isLoading = true, hasError = false, wallpapers = emptyList(), endReached = false) }
 
-        val source = WallpaperSource.CategoryWallpapers(categoryId)
         val bucket = source.cacheBucket()
 
-        cacheCollectionJob = viewModelScope.launch {
-            repository.observeCachedWallpapers(bucket).collect { cached ->
-                if (hasStartedLivePagination) return@collect
-                setState { copy(wallpapers = cached, isLoading = false) }
-                cached.lastOrNull()?.let { last ->
-                    cursor = WallpaperCursor(last.priority.toLong(), last.createdAt)
+        // Instant paint from Room, in the exact order Firestore returned it.
+        cacheCollectionJob = launchSafely {
+            repository.observeCachedWallpapers(bucket)
+                .catch { }
+                .collect { cached ->
+                    if (hasStartedLivePagination || cached.isEmpty()) return@collect
+                    cursor = cached.last().toCursor()
+                    setState { copy(wallpapers = cached, isLoading = false, hasError = false) }
                 }
-            }
         }
-        viewModelScope.launch {
-            repository.ensureWallpaperBucketFresh(source, bucket)
+
+        // Refreshes the cache if stale; if that fails with nothing to show, offer a Retry
+        // instead of leaving a blank screen.
+        launchSafely {
+            val refreshed = repository.ensureWallpaperBucketFresh(source, bucket)
+            if (currentState.wallpapers.isEmpty()) {
+                setState { copy(isLoading = false, hasError = !refreshed) }
+            }
         }
     }
 
-    private fun loadNextPage() {
-        if (currentState.isLoadingMore || currentState.endReached) return
+    private suspend fun loadNextPage() {
+        val current = currentState
+        if (current.isLoadingMore || current.endReached || current.wallpapers.isEmpty()) return
+        val from = cursor ?: return
+
         hasStartedLivePagination = true
         cacheCollectionJob?.cancel()
+        setState { copy(isLoadingMore = true) }
 
-        viewModelScope.launch {
-            setState { copy(isLoadingMore = true) }
-            val page = repository.loadWallpaperPage(WallpaperSource.CategoryWallpapers(categoryId), cursor)
-            cursor = page.nextCursor
-            setState {
-                copy(
-                    wallpapers = wallpapers + page.items,
-                    isLoadingMore = false,
-                    endReached = page.endReached
-                )
+        runSuspendCatching { repository.loadWallpaperPage(source, from) }
+            .onSuccess { page ->
+                page.nextCursor?.let { cursor = it }
+                setState {
+                    copy(
+                        // distinctBy: a duplicate key would crash the lazy grid.
+                        wallpapers = (wallpapers + page.items).distinctBy { it.id },
+                        isLoadingMore = false,
+                        endReached = page.endReached
+                    )
+                }
             }
-        }
+            .onFailure {
+                // Offline / transient: clear the spinner; the next scroll near the end retries.
+                setState { copy(isLoadingMore = false) }
+            }
     }
 }

@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
  * around the NavHost, and applies a pending notification deep link once, on launch.
  */
 @Composable
-fun AppRoot(pendingDeepLink: DeepLinkTarget?) {
+fun AppRoot(pendingDeepLink: DeepLinkTarget?, onDeepLinkConsumed: () -> Unit = {}) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -49,8 +49,12 @@ fun AppRoot(pendingDeepLink: DeepLinkTarget?) {
         )
     }
 
-    // Apply a notification deep link exactly once when the app cold-starts from a tap.
+    // Apply a notification deep link once per tap - whether it cold-started the app or arrived
+    // while it was already open - then clear it so the same target can be applied again later.
     LaunchedEffect(pendingDeepLink) {
-        pendingDeepLink?.let { navController.navigateToDeepLinkTarget(it) }
+        pendingDeepLink?.let {
+            navController.navigateToDeepLinkTarget(it)
+            onDeepLinkConsumed()
+        }
     }
 }

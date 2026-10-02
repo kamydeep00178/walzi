@@ -10,15 +10,15 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
-import com.google.firebase.ktx.Firebase
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.messaging.FirebaseMessaging
-import com.yunok.walzi.ads.AdManager
-import com.yunok.walzi.ads.AdsConfig
 import com.yunok.walzi.domain.repository.WallpaperListRepository
 import com.yunok.walzi.util.AutoRotateScheduler
+import com.yunok.walzi.util.CrashReporter
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -35,14 +35,15 @@ class WalziApp : Application(), ImageLoaderFactory, Configuration.Provider {
             .setWorkerFactory(hiltWorkerFactory)
             .build()
 
+    /** Process-lifetime scope for fire-and-forget startup work. SupervisorJob: one failure can't cancel the rest. */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     override fun onCreate() {
         super.onCreate()
-     //   Firebase.crashlytics.isCrashlyticsCollectionEnabled = !BuildConfig.DEBUG
+        // Crash reports only from release builds, so debugging crashes don't pollute the dashboard.
+        FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(!BuildConfig.DEBUG)
 
-        val adsConfig = AdsConfig(
-            isDebug = BuildConfig.DEBUG
-        )
-      //  AdManager.init(adsConfig)
+        // Ads are initialised from MainActivity, after the consent flow - see AdsConfig.ADS_ENABLED.
         createNotificationChannel()
         subscribeToDefaultTopic()
         reArmAutoRotateIfEnabled()
@@ -54,9 +55,13 @@ class WalziApp : Application(), ImageLoaderFactory, Configuration.Provider {
      * policy below is a no-op if it's already scheduled, so this is cheap and idempotent).
      */
     private fun reArmAutoRotateIfEnabled() {
-        CoroutineScope(Dispatchers.Default).launch {
-            if (wallpaperListRepository.observeAutoRotateSettings().first().enabled) {
-                autoRotateScheduler.schedule()
+        appScope.launch {
+            try {
+                if (wallpaperListRepository.observeAutoRotateSettings().first().enabled) {
+                    autoRotateScheduler.schedule()
+                }
+            } catch (e: Exception) {
+                CrashReporter.record(e)
             }
         }
     }
@@ -68,7 +73,9 @@ class WalziApp : Application(), ImageLoaderFactory, Configuration.Provider {
      *
      * Tuned specifically for a wallpaper app:
      *  - Memory cache: 25% of available app memory, so scrolling the masonry grid re-shows
-     *    already-seen wallpapers instantly without re-decoding.
+     *    already-seen wallpapers instantly without re-decoding. It only stays useful because
+     *    nothing puts full-resolution bitmaps into it: the detail preview decodes at screen
+     *    size, and set/download bypass it (see util/ImageRequests.kt).
      *  - Disk cache: capped at 250MB on-device, so wallpapers survive process death / app
      *    restarts without needing to re-download from R2 every time.
      *  - respectCacheHeaders(false): R2 doesn't set long-lived Cache-Control headers by
@@ -90,7 +97,6 @@ class WalziApp : Application(), ImageLoaderFactory, Configuration.Provider {
                     .build()
             }
             .respectCacheHeaders(false)
-            .crossfade(true)
             .crossfade(200)
             .build()
     }

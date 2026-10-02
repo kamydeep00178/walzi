@@ -6,12 +6,11 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -43,11 +42,15 @@ fun placeholderColorFor(id: String): Color =
  * Modern diagonal shimmer sweep over a colored base - used as the loading state for grid
  * thumbnails so scrolling through not-yet-loaded wallpapers feels lively instead of showing
  * blank/gray boxes.
+ *
+ * The animated offset is read inside the draw phase only, so the sweep re-draws every frame but
+ * never recomposes. (Reading it in the composable body - as this used to - recomposed every
+ * visible placeholder on every frame while scrolling.)
  */
 @Composable
 fun ShimmerPlaceholder(baseColor: Color, modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition(label = "shimmer")
-    val translate by transition.animateFloat(
+    val translate = transition.animateFloat(
         initialValue = -600f,
         targetValue = 1200f,
         animationSpec = infiniteRepeatable(
@@ -57,20 +60,27 @@ fun ShimmerPlaceholder(baseColor: Color, modifier: Modifier = Modifier) {
         label = "shimmerTranslate"
     )
 
-    val brush = Brush.linearGradient(
-        colors = listOf(
-            baseColor.copy(alpha = 0.55f),
-            baseColor.copy(alpha = 0.85f),
-            baseColor.copy(alpha = 0.55f)
-        ),
-        start = Offset(translate, translate),
-        end = Offset(translate + 400f, translate + 400f)
-    )
-
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(baseColor.copy(alpha = 0.35f))
-            .background(brush)
+            .drawWithCache {
+                val base = baseColor.copy(alpha = 0.35f)
+                val sweepColors = listOf(
+                    baseColor.copy(alpha = 0.55f),
+                    baseColor.copy(alpha = 0.85f),
+                    baseColor.copy(alpha = 0.55f)
+                )
+                onDrawBehind {
+                    val t = translate.value // draw-phase read
+                    drawRect(base)
+                    drawRect(
+                        Brush.linearGradient(
+                            colors = sweepColors,
+                            start = Offset(t, t),
+                            end = Offset(t + 400f, t + 400f)
+                        )
+                    )
+                }
+            }
     )
 }

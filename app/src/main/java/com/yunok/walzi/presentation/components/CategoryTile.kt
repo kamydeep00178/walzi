@@ -1,6 +1,5 @@
 package com.yunok.walzi.presentation.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,20 +9,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.SubcomposeAsyncImage
-import coil.compose.SubcomposeAsyncImageContent
-import coil.request.ImageRequest
 import coil.size.Size
 import com.yunok.walzi.domain.model.Category
 
@@ -36,8 +28,6 @@ fun CategoryTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -45,31 +35,14 @@ fun CategoryTile(
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
     ) {
-        SubcomposeAsyncImage(
-            model = remember(category.imageUrl) {
-                ImageRequest.Builder(context)
-                    .data(category.imageUrl)
-                    .size(CATEGORY_TILE_SIZE)
-                    .crossfade(true)
-                    .build()
-            },
+        ThumbImage(
+            url = category.imageUrl,
+            placeholderKey = category.id,
+            size = CATEGORY_TILE_SIZE,
             contentDescription = category.name,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-            loading = { ShimmerPlaceholder(baseColor = placeholderColorFor(category.id), modifier = Modifier.fillMaxSize()) },
-            error = { ShimmerPlaceholder(baseColor = placeholderColorFor(category.id), modifier = Modifier.fillMaxSize()) },
-            success = { SubcomposeAsyncImageContent() }
+            modifier = Modifier.fillMaxSize()
         )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f)),
-                        startY = 0.3f
-                    )
-                )
-        )
+        Box(modifier = Modifier.matchParentSize().bottomScrim(startFraction = 0.3f, maxAlpha = 0.75f))
         Text(
             text = category.name.uppercase(),
             color = Color.White,

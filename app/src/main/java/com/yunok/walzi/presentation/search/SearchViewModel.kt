@@ -7,6 +7,7 @@ import com.yunok.walzi.domain.model.Tag
 import com.yunok.walzi.domain.repository.WallpaperRepository
 import com.yunok.walzi.presentation.common.BaseViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.debounce
@@ -114,6 +115,9 @@ class SearchViewModel @Inject constructor(
                 val results = repository.searchWallpapersByTag(tagName)
                 searchHistory.addSearch(tagName)
                 setState { copy(isLoadingResults = false, wallpaperResults = results) }
+            } catch (e: CancellationException) {
+                // A newer tag tap cancelled this search - don't clobber its loading state with an error.
+                throw e
             } catch (e: Exception) {
                 android.util.Log.e("SearchViewModel", "Tag search failed for \"$tagName\"", e)
                 setState { copy(isLoadingResults = false, resultsError = e.message ?: "Search failed") }

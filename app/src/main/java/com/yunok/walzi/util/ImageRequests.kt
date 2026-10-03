@@ -35,3 +35,7 @@ fun Context.wallpaperBitmapRequest(imageUrl: String): ImageRequest =
 /** Key shared by grid thumbnails and the detail screen's placeholder, so opening a wallpaper
  *  paints the already-decoded thumbnail instantly instead of a blank frame. */
 fun thumbMemoryKey(imageUrl: String): String = "thumb:$imageUrl"
+
+/** Decode size for grid thumbnails. The detail screen requests the thumbnail with this same
+ *  size + [thumbMemoryKey], so it reuses the grid's already-decoded bitmap from memory. */
+val GRID_THUMBNAIL_SIZE = Size(480, 800)

@@ -17,22 +17,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.size.Size
 import com.yunok.walzi.domain.model.Wallpaper
+import com.yunok.walzi.util.GRID_THUMBNAIL_SIZE
 import com.yunok.walzi.util.thumbMemoryKey
 
 /**
- * Grid thumbnails don't need full wallpaper resolution decoded into memory - capping the
- * decode target here keeps the masonry grid smooth and the memory/disk cache footprint small.
- * Note: this reduces decode + cache size, not network bytes downloaded (R2 serves one file
- * per wallpaper) - see WallpaperDetailScreen for the screen-sized request used on open.
+ * Grid card: loads the light thumbnail ([Wallpaper.gridImageUrl]) decoded at
+ * [GRID_THUMBNAIL_SIZE], so the masonry grid stays smooth and cheap on data and memory.
  *
  * No favorite/heart button here by design - favoriting happens from the full-screen detail
  * view's action row, keeping every grid (Recent, Popular, Category, Favourites, List detail)
  * uncluttered and visually consistent.
  */
-private val GRID_THUMBNAIL_SIZE = Size(480, 800)
-
 @Composable
 fun WallpaperCard(
     wallpaper: Wallpaper,
@@ -48,7 +44,7 @@ fun WallpaperCard(
             .clickable(onClick = onClick)
     ) {
         ThumbImage(
-            url = wallpaper.imageUrl,
+            url = wallpaper.gridImageUrl,
             placeholderKey = wallpaper.id,
             size = GRID_THUMBNAIL_SIZE,
             contentDescription = wallpaper.title,

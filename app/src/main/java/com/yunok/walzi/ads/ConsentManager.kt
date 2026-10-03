@@ -3,6 +3,8 @@ package com.yunok.walzi.ads
 import android.app.Activity
 import android.content.Context
 import android.util.Log
+import com.google.android.ump.ConsentDebugSettings
+import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.android.ump.ConsentInformation
 import com.google.android.ump.ConsentRequestParameters
 import com.google.android.ump.UserMessagingPlatform
@@ -45,34 +47,18 @@ object ConsentManager {
         activity   : Activity,
         onComplete : (canRequestAds: Boolean) -> Unit
     ) {
-        // Ads switched off: no consent prompt, no callback - nothing will ever request ads.
-        if (!AdsConfig.ADS_ENABLED) return
-
         val paramsBuilder = ConsentRequestParameters.Builder()
             .setTagForUnderAgeOfConsent(false)
 
-        // ── DEBUG ONLY — simulates different regions for testing ───────────────
-        // Remove or comment out before release build!
-        // Uncomment ONE of these to test the consent form on your debug device:
-        //
-        // Test EEA/GDPR form:
-        // if (BuildConfig.DEBUG) {
-        //     val debugSettings = ConsentDebugSettings.Builder(activity)
-        //         .setDebugGeography(ConsentDebugSettings.DebugGeography.DEBUG_GEOGRAPHY_EEA)
-        //         .addTestDeviceHashedId("YOUR_DEVICE_HASH_FROM_LOGCAT")
-        //         .build()
-        //     paramsBuilder.setConsentDebugSettings(debugSettings)
-        // }
-        //
-        // Test non-EEA (no form shown):
-        // if (BuildConfig.DEBUG) {
-        //     val debugSettings = ConsentDebugSettings.Builder(activity)
-        //         .setDebugGeography(ConsentDebugSettings.DebugGeography.DEBUG_GEOGRAPHY_NOT_EEA)
-        //         .addTestDeviceHashedId("YOUR_DEVICE_HASH_FROM_LOGCAT")
-        //         .build()
-        //     paramsBuilder.setConsentDebugSettings(debugSettings)
-        // }
-        // ──────────────────────────────────────────────────────────────────────
+        // DEBUG builds only: pretend this device is in the EEA so the GDPR form and the
+        // denied-by-default Analytics consent can be tested. Never active in release builds.
+        if (BuildConfig.DEBUG && AdsConfig.DEBUG_FORCE_EEA) {
+            val debugSettings = ConsentDebugSettings.Builder(activity)
+                .setDebugGeography(ConsentDebugSettings.DebugGeography.DEBUG_GEOGRAPHY_EEA)
+                .apply { AdsConfig.TEST_DEVICE_IDS.forEach { addTestDeviceHashedId(it) } }
+                .build()
+            paramsBuilder.setConsentDebugSettings(debugSettings)
+        }
 
         val params = paramsBuilder.build()
         val consentInfo = UserMessagingPlatform.getConsentInformation(activity)
@@ -91,6 +77,9 @@ object ConsentManager {
                             "canAds=${consentInfo.canRequestAds()}"
                 )
 
+                // Status is known now (not required / already obtained) - update Analytics before any form.
+                applyAnalyticsConsent(activity)
+
                 UserMessagingPlatform.loadAndShowConsentFormIfRequired(activity) { formError ->
                     Log.d(
                         TAG,
@@ -103,6 +92,9 @@ object ConsentManager {
                                 "privacy=${consentInfo.privacyOptionsRequirementStatus}, " +
                                 "canAds=${consentInfo.canRequestAds()}"
                     )
+
+                    // The user just made (or kept) their choice - pass it to Analytics.
+                    applyAnalyticsConsent(activity)
 
                     if (consentInfo.canRequestAds()) {
                         onComplete(true)
@@ -124,15 +116,71 @@ object ConsentManager {
      * Show a "Privacy Settings" button only when this returns true.
      */
     fun isPrivacyOptionsRequired(context: Context): Boolean =
-        AdsConfig.ADS_ENABLED &&
-            UserMessagingPlatform.getConsentInformation(context)
+        UserMessagingPlatform.getConsentInformation(context)
                 .privacyOptionsRequirementStatus ==
                 ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED
 
     fun showPrivacyOptionsForm(activity: Activity, onDismiss: () -> Unit = {}) {
         UserMessagingPlatform.showPrivacyOptionsForm(activity) {
+            // The user may have changed their choice - keep Analytics in sync.
+            applyAnalyticsConsent(activity)
             onDismiss()
         }
+    }
+
+    /**
+     * Google Consent Mode for Firebase Analytics. The manifest starts every type DENIED; this
+     * sets the real decision once UMP knows it:
+     *  - NOT_REQUIRED (no regulation applies, e.g. India)  -> everything granted.
+     *  - OBTAINED and GDPR applies -> mapped from the user's TCF purpose choices:
+     *      analytics_storage, ad_storage <- Purpose 1 (store / access information on a device)
+     *      ad_user_data                 <- Purposes 1 + 7 (measure ad performance)
+     *      ad_personalization           <- Purposes 3 + 4 (personalised ads profile + selection)
+     *  - OBTAINED, GDPR doesn't apply -> granted.
+     *  - REQUIRED / UNKNOWN (form not answered yet, or failed to load) -> left as is (denied).
+     * Firebase persists the last setConsent() call, so returning users keep their choice.
+     *
+     * Not covered: US-state opt-outs ("do not sell/share") are applied to ads by the Mobile Ads
+     * SDK itself; Analytics here only follows the GDPR (TCF) choices.
+     */
+    fun applyAnalyticsConsent(context: Context) {
+        val status = UserMessagingPlatform.getConsentInformation(context).consentStatus
+        val granted: Map<FirebaseAnalytics.ConsentType, Boolean> = when (status) {
+            ConsentInformation.ConsentStatus.NOT_REQUIRED -> allConsentTypes(true)
+            ConsentInformation.ConsentStatus.OBTAINED -> fromTcf(context)
+            else -> {
+                Log.d(TAG, "Analytics consent unchanged (status=$status)")
+                return
+            }
+        }
+        FirebaseAnalytics.getInstance(context).setConsent(
+            granted.mapValues { (_, ok) ->
+                if (ok) FirebaseAnalytics.ConsentStatus.GRANTED else FirebaseAnalytics.ConsentStatus.DENIED
+            }
+        )
+        Log.d(TAG, "Analytics consent applied: $granted")
+    }
+
+    private fun allConsentTypes(value: Boolean) = mapOf(
+        FirebaseAnalytics.ConsentType.ANALYTICS_STORAGE to value,
+        FirebaseAnalytics.ConsentType.AD_STORAGE to value,
+        FirebaseAnalytics.ConsentType.AD_USER_DATA to value,
+        FirebaseAnalytics.ConsentType.AD_PERSONALIZATION to value
+    )
+
+    /** Reads the IAB TCF v2 strings UMP stores in the default SharedPreferences (<package>_preferences). */
+    private fun fromTcf(context: Context): Map<FirebaseAnalytics.ConsentType, Boolean> {
+        val prefs = context.getSharedPreferences("${context.packageName}_preferences", Context.MODE_PRIVATE)
+        if (prefs.getInt("IABTCF_gdprApplies", 0) != 1) return allConsentTypes(true)
+        // "1" / "0" per purpose, purpose N at index N-1.
+        val purposes = prefs.getString("IABTCF_PurposeConsents", "").orEmpty()
+        fun purpose(n: Int) = purposes.getOrNull(n - 1) == '1'
+        return mapOf(
+            FirebaseAnalytics.ConsentType.ANALYTICS_STORAGE to purpose(1),
+            FirebaseAnalytics.ConsentType.AD_STORAGE to purpose(1),
+            FirebaseAnalytics.ConsentType.AD_USER_DATA to (purpose(1) && purpose(7)),
+            FirebaseAnalytics.ConsentType.AD_PERSONALIZATION to (purpose(3) && purpose(4))
+        )
     }
 
     /** Reset consent — useful for testing. Call from debug menu only. */

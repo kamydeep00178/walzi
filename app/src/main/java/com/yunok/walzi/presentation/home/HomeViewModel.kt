@@ -68,7 +68,7 @@ class HomeViewModel @Inject constructor(
                         async {
                             // Non-throwing and memoised in the repository: no Firestore reads
                             // after the first time a wallpaper has been seen.
-                            val urls = repository.getWallpapersByIds(list.wallpaperIds.take(3)).map { it.imageUrl }
+                            val urls = repository.getWallpapersByIds(list.wallpaperIds.take(3)).map { it.gridImageUrl }
                             PlaylistPreview(list, urls)
                         }
                     }.awaitAll()

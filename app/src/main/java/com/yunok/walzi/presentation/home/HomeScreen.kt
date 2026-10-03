@@ -53,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,16 +68,15 @@ import coil.size.Size
 import com.google.android.gms.ads.nativead.NativeAd
 import com.yunok.walzi.R
 import com.yunok.walzi.ads.AdViewModel
-import com.yunok.walzi.ads.AdsConfig
 import com.yunok.walzi.ads.BannerAdComposable
+import com.yunok.walzi.ads.NATIVE_ADS_PER_FEED
 import com.yunok.walzi.ads.NativeAdCard
 import com.yunok.walzi.domain.model.Category
 import com.yunok.walzi.domain.model.Wallpaper
 import com.yunok.walzi.presentation.components.CategoryTile
 import com.yunok.walzi.presentation.components.ErrorState
 import com.yunok.walzi.presentation.components.ThumbImage
-import com.yunok.walzi.presentation.components.WallpaperCard
-import com.yunok.walzi.presentation.components.aspectRatioFor
+import com.yunok.walzi.presentation.components.wallpaperCardsWithAds
 import com.yunok.walzi.presentation.components.bottomScrim
 import com.yunok.walzi.presentation.theme.Accent3
 import com.yunok.walzi.presentation.theme.BgApp
@@ -86,6 +86,7 @@ import com.yunok.walzi.presentation.theme.Surface
 import com.yunok.walzi.presentation.theme.TextPrimary
 import com.yunok.walzi.presentation.theme.TextSecondary
 import com.yunok.walzi.presentation.theme.TextTertiary
+import com.yunok.walzi.util.findActivity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
@@ -103,8 +104,9 @@ private val TAB_ORDER = FEED_TABS.map { it.first }
 /** Start fetching the next page when the last visible item is within this many items of the end. */
 private const val PREFETCH_DISTANCE = 6
 
-/** The single native ad sits in the feed after this many wallpapers. */
-private const val NATIVE_AD_AFTER = 8
+/** The Collections grid's single native ad sits after this many category tiles (an even
+ *  number, so it starts a fresh row). */
+private const val COLLECTIONS_AD_AFTER = 6
 
 /** Decode targets matched to each slot's on-screen size, so memory stays proportional to what's visible. */
 private val FEATURED_IMAGE_SIZE = Size(1000, 840)
@@ -133,6 +135,17 @@ fun HomeScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val pagerState = rememberPagerState(initialPage = TAB_ORDER.indexOf(state.selectedTab)) { TAB_ORDER.size }
     val scope = rememberCoroutineScope()
+    val activity = LocalContext.current.findActivity()
+
+    // Feeds get NATIVE_ADS_PER_FEED ads; the extra one is the Collections grid's tile.
+    LaunchedEffect(adViewModel) { adViewModel.requestNativeAds(NATIVE_ADS_PER_FEED + 1) }
+    val nativeAds = adViewModel.nativeAds
+
+    // Opening a category is a natural break: a frequency-capped interstitial may show first,
+    // and navigation continues once it's closed (or immediately when skipped).
+    val onCategoryClickWithAd: (String) -> Unit = remember(onCategoryClick, activity, adViewModel) {
+        { id -> if (activity != null) adViewModel.showInterstitial(activity) { onCategoryClick(id) } else onCategoryClick(id) }
+    }
 
     val goToTab: (FeedTab) -> Unit = remember(pagerState, scope) {
         { tab -> scope.launch { pagerState.animateScrollToPage(TAB_ORDER.indexOf(tab)) } }
@@ -159,7 +172,11 @@ fun HomeScreen(
             val tab = TAB_ORDER[page]
 
             if (tab == FeedTab.COLLECTIONS) {
-                CollectionsGrid(categories = state.categories, onCategoryClick = onCategoryClick)
+                CollectionsGrid(
+                    categories = state.categories,
+                    nativeAd = nativeAds.getOrNull(NATIVE_ADS_PER_FEED),
+                    onCategoryClick = onCategoryClickWithAd
+                )
             } else {
                 // Per-tab lambdas capture only stable values (tab / viewModel) - never `state` -
                 // so unrelated state changes don't invalidate every visible card.
@@ -174,7 +191,7 @@ fun HomeScreen(
                     tabState = state.tab(tab),
                     featured = state.featuredWallpapers,
                     playlists = state.playlists,
-                    nativeAd = adViewModel.nativeAd,
+                    nativeAds = nativeAds.take(NATIVE_ADS_PER_FEED),
                     onWallpaperClick = onClick,
                     onLoadMore = onLoadMore,
                     onRetry = onRetry,
@@ -184,8 +201,10 @@ fun HomeScreen(
             }
         }
 
-        // No-op (renders nothing) unless AdsConfig.ADS_ENABLED.
-        BannerAdComposable()
+        // Policy: no ads on screens without content (empty, loading or error states).
+        val settledTab = TAB_ORDER[pagerState.settledPage]
+        val tabHasContent = if (settledTab == FeedTab.COLLECTIONS) state.categories.isNotEmpty() else state.tab(settledTab).wallpapers.isNotEmpty()
+        if (tabHasContent) BannerAdComposable()
     }
 }
 
@@ -195,7 +214,7 @@ private fun FeedPage(
     tabState: TabState,
     featured: List<Wallpaper>,
     playlists: List<PlaylistPreview>,
-    nativeAd: NativeAd?,
+    nativeAds: List<NativeAd>,
     onWallpaperClick: (String) -> Unit,
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
@@ -281,8 +300,8 @@ private fun FeedPage(
             WallpaperMasonry(
                 wallpapers = tabState.wallpapers,
                 isLoadingMore = tabState.isLoadingMore,
-                // The native ad only belongs in the two infinite feeds, not the bounded Favourites list.
-                nativeAd = if (tab == FeedTab.FAVORITES) null else nativeAd,
+                // Native ads only belong in the two infinite feeds, not the user's own Favourites.
+                nativeAds = if (tab == FeedTab.FAVORITES) emptyList() else nativeAds,
                 onLoadMore = onLoadMore,
                 onWallpaperClick = onWallpaperClick,
                 headerContent = header
@@ -477,7 +496,7 @@ private fun FeaturedCarousel(
                     .clickable { onWallpaperClick(wallpaper.id) }
             ) {
                 ThumbImage(
-                    url = wallpaper.imageUrl,
+                    url = wallpaper.gridImageUrl,
                     placeholderKey = wallpaper.id,
                     size = FEATURED_IMAGE_SIZE,
                     contentDescription = wallpaper.title,
@@ -652,7 +671,7 @@ private fun CollectionCard(
 private fun WallpaperMasonry(
     wallpapers: List<Wallpaper>,
     isLoadingMore: Boolean,
-    nativeAd: NativeAd?,
+    nativeAds: List<NativeAd>,
     onLoadMore: () -> Unit,
     onWallpaperClick: (String) -> Unit,
     headerContent: (@Composable () -> Unit)? = null
@@ -675,9 +694,6 @@ private fun WallpaperMasonry(
             .collect { currentOnLoadMore() }
     }
 
-    val showAd = AdsConfig.ADS_ENABLED && nativeAd != null && wallpapers.size > NATIVE_AD_AFTER
-    val countBeforeAd = if (showAd) NATIVE_AD_AFTER else wallpapers.size
-
     LazyVerticalStaggeredGrid(
         columns = StaggeredGridCells.Fixed(2),
         state = gridState,
@@ -690,32 +706,7 @@ private fun WallpaperMasonry(
             item(key = "header", span = StaggeredGridItemSpan.FullLine, contentType = "header") { content() }
         }
 
-        items(count = countBeforeAd, key = { wallpapers[it].id }, contentType = { "wallpaper" }) { index ->
-            val wallpaper = wallpapers[index]
-            WallpaperCard(
-                wallpaper = wallpaper,
-                aspectRatio = aspectRatioFor(wallpaper.id),
-                onClick = { onWallpaperClick(wallpaper.id) }
-            )
-        }
-
-        if (showAd) {
-            item(key = "native_ad", span = StaggeredGridItemSpan.FullLine, contentType = "native_ad") {
-                NativeAdCard(nativeAd = nativeAd)
-            }
-            items(
-                count = wallpapers.size - countBeforeAd,
-                key = { wallpapers[countBeforeAd + it].id },
-                contentType = { "wallpaper" }
-            ) { offset ->
-                val wallpaper = wallpapers[countBeforeAd + offset]
-                WallpaperCard(
-                    wallpaper = wallpaper,
-                    aspectRatio = aspectRatioFor(wallpaper.id),
-                    onClick = { onWallpaperClick(wallpaper.id) }
-                )
-            }
-        }
+        wallpaperCardsWithAds(wallpapers = wallpapers, nativeAds = nativeAds, onWallpaperClick = onWallpaperClick)
 
         if (isLoadingMore) {
             item(key = "loading_more", span = StaggeredGridItemSpan.FullLine, contentType = "loading") {
@@ -730,8 +721,12 @@ private fun WallpaperMasonry(
 @Composable
 private fun CollectionsGrid(
     categories: List<Category>,
+    nativeAd: NativeAd?,
     onCategoryClick: (String) -> Unit
 ) {
+    // One full-row native ad among the category tiles, only where tiles continue after it.
+    val adAfter = if (nativeAd != null && categories.size > COLLECTIONS_AD_AFTER) COLLECTIONS_AD_AFTER else categories.size
+
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         modifier = Modifier.fillMaxSize(),
@@ -746,8 +741,16 @@ private fun CollectionsGrid(
                 subtitle = "Beautiful themes for every mood and moment.",
             )
         }
-        items(categories, key = { it.id }) { category ->
+        items(categories.subList(0, adAfter), key = { it.id }) { category ->
             CategoryTile(category = category, onClick = { onCategoryClick(category.id) })
+        }
+        if (adAfter < categories.size) {
+            item(key = "native_ad", span = { GridItemSpan(maxLineSpan) }, contentType = "native_ad") {
+                NativeAdCard(nativeAd = nativeAd)
+            }
+            items(categories.subList(adAfter, categories.size), key = { it.id }) { category ->
+                CategoryTile(category = category, onClick = { onCategoryClick(category.id) })
+            }
         }
     }
 }

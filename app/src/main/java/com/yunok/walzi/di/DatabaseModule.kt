@@ -33,11 +33,32 @@ object DatabaseModule {
         }
     }
 
+    /**
+     * v5 -> v6: wallpaper_cache gains `thumbUrl`. Rows are kept (not deleted): an empty thumbUrl
+     * just falls back to imageUrl until the bucket's normal refresh fills it. Deleting would blank
+     * "Today's Picks" until tomorrow, since that bucket only regenerates once per calendar day.
+     */
+    private val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE wallpaper_cache ADD COLUMN thumbUrl TEXT NOT NULL DEFAULT ''")
+        }
+    }
+
+    /**
+     * v6 -> v7: categories gains `thumbUrl`. Rows are kept: an empty thumbUrl falls back to
+     * imageUrl until the daily category refresh (CacheConfig) fills it in.
+     */
+    private val MIGRATION_6_7 = object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE categories ADD COLUMN thumbUrl TEXT NOT NULL DEFAULT ''")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideWalziDatabase(@ApplicationContext context: Context): WalziDatabase =
         Room.databaseBuilder(context, WalziDatabase::class.java, "walzi.db")
-            .addMigrations(MIGRATION_4_5)
+            .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
             // Only reached for installs older than v4 (no migration path) - see note above.
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()

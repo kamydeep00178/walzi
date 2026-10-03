@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.yunok.walzi.ads.BannerAdComposable
 import com.yunok.walzi.presentation.components.WallpaperCard
 import com.yunok.walzi.presentation.theme.Accent3
 import com.yunok.walzi.presentation.theme.BgApp
@@ -59,32 +60,38 @@ fun FavoritesScreen(
             Text("Favorites", fontWeight = FontWeight.Bold, fontSize = 19.sp, color = TextPrimary, modifier = Modifier.padding(start = 6.dp))
         }
 
-        when {
-            state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Accent3)
-            }
-            state.wallpapers.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Filled.FavoriteBorder, contentDescription = null, tint = TextTertiary)
-                    Text("No favorites yet", color = TextPrimary, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 10.dp))
-                    Text("Tap the heart on any wallpaper to save it here.", color = TextTertiary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+        // Content takes the remaining height; the banner sits below it, never over it.
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            when {
+                state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Accent3)
                 }
-            }
-            else -> LazyVerticalStaggeredGrid(
-                columns = StaggeredGridCells.Fixed(2),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalItemSpacing = 12.dp,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(state.wallpapers, key = { it.id }) { wallpaper ->
-                    WallpaperCard(
-                        wallpaper = wallpaper,
-                        aspectRatio = aspectRatioFor(wallpaper.id),
-                        onClick = { onWallpaperClick(wallpaper.id) }
-                    )
+                state.wallpapers.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Filled.FavoriteBorder, contentDescription = null, tint = TextTertiary)
+                        Text("No favorites yet", color = TextPrimary, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 10.dp))
+                        Text("Tap the heart on any wallpaper to save it here.", color = TextTertiary, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
+                else -> LazyVerticalStaggeredGrid(
+                    columns = StaggeredGridCells.Fixed(2),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalItemSpacing = 12.dp,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(state.wallpapers, key = { it.id }) { wallpaper ->
+                        WallpaperCard(
+                            wallpaper = wallpaper,
+                            aspectRatio = aspectRatioFor(wallpaper.id),
+                            onClick = { onWallpaperClick(wallpaper.id) }
+                        )
+                    }
                 }
             }
         }
+
+        // Policy: no ads on screens without content (empty, loading or error states).
+        if (!state.isLoading && state.wallpapers.isNotEmpty()) BannerAdComposable()
     }
 }

@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
@@ -32,9 +34,11 @@ import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Wallpaper
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -45,10 +49,15 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,9 +73,14 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.yunok.walzi.ads.AdFreeManager
+import com.yunok.walzi.ads.AdViewModel
+import com.yunok.walzi.ads.AdsConfig
 import com.yunok.walzi.domain.model.Wallpaper
 import com.yunok.walzi.domain.model.WallpaperList
 import com.yunok.walzi.presentation.components.ErrorState
+import com.yunok.walzi.util.GRID_THUMBNAIL_SIZE
+import com.yunok.walzi.util.ImageLoadProgress
 import com.yunok.walzi.util.findActivity
 import com.yunok.walzi.util.thumbMemoryKey
 import com.yunok.walzi.presentation.theme.Accent1
@@ -76,8 +90,10 @@ import com.yunok.walzi.presentation.theme.Elevated
 import com.yunok.walzi.presentation.theme.GradientSignature
 import com.yunok.walzi.presentation.theme.Surface
 import com.yunok.walzi.presentation.theme.TextPrimary
+import com.yunok.walzi.presentation.theme.TextSecondary
 import com.yunok.walzi.presentation.theme.TextTertiary
 import com.yunok.walzi.util.WallpaperTarget
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -90,7 +106,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun WallpaperDetailScreen(
     onBack: () -> Unit,
-    viewModel: WallpaperDetailViewModel = hiltViewModel()
+    viewModel: WallpaperDetailViewModel = hiltViewModel(),
+    adViewModel: AdViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -102,10 +119,13 @@ fun WallpaperDetailScreen(
             when (effect) {
                 is WallpaperDetailEffect.ShowMessage -> scope.launch { snackbarHostState.showSnackbar(effect.text) }
                 // Frequency-capped inside InterstitialAdManager; a no-op when ads are disabled.
-                WallpaperDetailEffect.ActionCompleted -> activity?.let(viewModel::showInterstitial)
+                WallpaperDetailEffect.ActionCompleted -> activity?.let { adViewModel.showInterstitial(it) }
             }
         }
     }
+
+    // Wallpaper id the "Watch an ad to download" dialog is open for, if any.
+    var rewardPromptFor by remember { mutableStateOf<String?>(null) }
 
     Box(modifier = Modifier.fillMaxSize().background(BgApp).windowInsetsPadding(WindowInsets.systemBars)) {
         if (state.isLoading) {
@@ -117,7 +137,6 @@ fun WallpaperDetailScreen(
                 modifier = Modifier.align(Alignment.Center)
             )
         } else {
-            val context = LocalContext.current
             val pagerState = rememberPagerState(initialPage = state.initialIndex) { state.wallpapers.size }
             val currentWallpaper = state.wallpapers.getOrNull(
                 pagerState.currentPage.coerceIn(0, state.wallpapers.lastIndex)
@@ -130,20 +149,69 @@ fun WallpaperDetailScreen(
                 }
             }
 
+            // The download waiting for the storage permission (pre-Android 10 only).
+            var pendingDownload by remember { mutableStateOf<WallpaperDetailIntent.Download?>(null) }
             val storagePermissionLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestPermission()
             ) { granted ->
-                if (granted) {
-                    currentWallpaper?.let { viewModel.sendIntent(WallpaperDetailIntent.Download(it.id)) }
+                if (granted) pendingDownload?.let(viewModel::sendIntent)
+                pendingDownload = null
+            }
+
+            fun startDownload(wallpaperId: String, viaReward: Boolean) {
+                val download = WallpaperDetailIntent.Download(wallpaperId, viaReward)
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                    pendingDownload = download
+                    storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                } else {
+                    viewModel.sendIntent(download)
                 }
             }
 
+            // Download is offered behind an opt-in rewarded ad. Whenever no ad can be shown
+            // (ads off, ad-free, no fill / offline) it simply downloads - never blocked.
             fun requestDownload(wallpaperId: String) {
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                    storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                if (AdsConfig.ADS_ENABLED && !AdFreeManager.isAdFreeNow() && adViewModel.isRewardedReady) {
+                    rewardPromptFor = wallpaperId
                 } else {
-                    viewModel.sendIntent(WallpaperDetailIntent.Download(wallpaperId))
+                    startDownload(wallpaperId, viaReward = false)
                 }
+            }
+
+            rewardPromptFor?.let { wallpaperId ->
+                AlertDialog(
+                    onDismissRequest = { rewardPromptFor = null },
+                    containerColor = Elevated,
+                    title = { Text("Download wallpaper", color = TextPrimary, fontWeight = FontWeight.Bold) },
+                    text = {
+                        Text(
+                            "Watch a short video ad to save this wallpaper to your gallery in full quality.",
+                            color = TextSecondary
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            rewardPromptFor = null
+                            val host = activity
+                            if (host == null) {
+                                startDownload(wallpaperId, viaReward = false)
+                            } else {
+                                adViewModel.showRewarded(host) { earned ->
+                                    if (earned) {
+                                        startDownload(wallpaperId, viaReward = true)
+                                    } else {
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Watch the full video to download.")
+                                        }
+                                    }
+                                }
+                            }
+                        }) { Text("Watch ad", color = Accent1, fontWeight = FontWeight.Bold) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { rewardPromptFor = null }) { Text("Cancel", color = TextSecondary) }
+                    }
+                )
             }
 
             // Only the image itself lives inside the pager, so only the image moves during a
@@ -151,29 +219,13 @@ fun WallpaperDetailScreen(
             VerticalPager(
                 state = pagerState,
                 modifier = Modifier.fillMaxSize(),
-                // Compose the next/previous wallpaper before the swipe reaches it, so it's
-                // already decoded (and not blank) when it slides in. Affordable because each page
-                // decodes at *screen* size, not the source's full resolution.
+                // Compose the next/previous wallpaper before the swipe reaches it, so it isn't
+                // blank when it slides in. Cheap: neighbours only ever load their thumbnail -
+                // the original waits until the user actually settles on that page.
                 beyondViewportPageCount = 1
             ) { page ->
-                val wallpaper = state.wallpapers[page]
-                AsyncImage(
-                    // The preview decodes at the size it's actually shown (Coil measures the
-                    // page), NOT Size.ORIGINAL: a 4K source is ~33 MB decoded and a few of those
-                    // used to evict every grid thumbnail from the shared memory cache. Set
-                    // Wallpaper / Download still act on the full-resolution file (see
-                    // WallpaperSetter / ImageDownloader). The grid's thumbnail paints instantly
-                    // as the placeholder while the sharper image loads.
-                    model = remember(wallpaper.imageUrl) {
-                        ImageRequest.Builder(context)
-                            .data(wallpaper.imageUrl)
-                            .placeholderMemoryCacheKey(thumbMemoryKey(wallpaper.imageUrl))
-                            .build()
-                    },
-                    contentDescription = wallpaper.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
+                val isSettledHere by remember(page) { derivedStateOf { pagerState.settledPage == page } }
+                PreviewPage(wallpaper = state.wallpapers[page], isSettledHere = isSettledHere)
             }
 
             // Fixed overlay: position stays put regardless of swipe progress. Only the data it
@@ -182,6 +234,12 @@ fun WallpaperDetailScreen(
             if (currentWallpaper != null) {
                 WallpaperOverlayTopBar(
                     onBack = onBack,
+                    modifier = Modifier.align(Alignment.TopCenter)
+                )
+
+                // Drawn after the top bar so it sits above its gradient, at the very top edge.
+                OriginalLoadProgressBar(
+                    imageUrl = currentWallpaper.imageUrl,
                     modifier = Modifier.align(Alignment.TopCenter)
                 )
 
@@ -254,6 +312,92 @@ fun WallpaperDetailScreen(
     }
 }
 
+/** How long the user must stay on a wallpaper before its full-resolution original loads. */
+private const val ORIGINAL_LOAD_DELAY_MS = 1000L
+
+/**
+ * One full-screen page, in two layers:
+ *  1. The thumbnail - the exact same request as the grid card (url, size, memory key), so it's
+ *     painted instantly from the memory cache, or fetched cheaply if it isn't cached.
+ *  2. The original, added on top only after the user has stayed on this page for
+ *     [ORIGINAL_LOAD_DELAY_MS]. Swiping past quickly never downloads it. It fades in over the
+ *     thumbnail, and if it fails the thumbnail simply stays.
+ *
+ * The original decodes at the page's on-screen size (Coil measures it), not Size.ORIGINAL - a 4K
+ * source is ~33 MB decoded. Set Wallpaper / Download still use the full-resolution file
+ * (see WallpaperSetter / ImageDownloader).
+ */
+@Composable
+private fun PreviewPage(wallpaper: Wallpaper, isSettledHere: Boolean) {
+    val context = LocalContext.current
+    // Once loaded, the original stays while this page is composed, so swiping back is instant.
+    var loadOriginal by remember(wallpaper.id) { mutableStateOf(false) }
+
+    LaunchedEffect(wallpaper.id, isSettledHere) {
+        if (!isSettledHere || loadOriginal) return@LaunchedEffect
+        // Without a separate thumbnail, the grid already downloaded the original file - waiting
+        // would save no data, so show the sharp version straight away.
+        if (wallpaper.thumbUrl.isNotEmpty()) delay(ORIGINAL_LOAD_DELAY_MS)
+        loadOriginal = true
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        AsyncImage(
+            model = remember(wallpaper.id) {
+                ImageRequest.Builder(context)
+                    .data(wallpaper.gridImageUrl)
+                    .size(GRID_THUMBNAIL_SIZE)
+                    .memoryCacheKey(thumbMemoryKey(wallpaper.imageUrl))
+                    .build()
+            },
+            contentDescription = wallpaper.title,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+        if (loadOriginal) {
+            AsyncImage(
+                model = remember(wallpaper.id) {
+                    ImageRequest.Builder(context).data(wallpaper.imageUrl).build()
+                },
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+/**
+ * Thin bar at the top showing the *real* download progress of the current wallpaper's original
+ * (bytes received / file size). Hidden while only the thumbnail is shown, when the original comes
+ * from cache, and once the download finishes. Indeterminate if the server sends no file size.
+ *
+ * Collects the progress itself, so its ~100 updates per download recompose only this bar.
+ */
+@Composable
+private fun OriginalLoadProgressBar(imageUrl: String, modifier: Modifier = Modifier) {
+    val progressFlow = remember(imageUrl) { ImageLoadProgress.track(imageUrl) }
+    DisposableEffect(imageUrl) {
+        onDispose { ImageLoadProgress.untrack(imageUrl) }
+    }
+    val progress by progressFlow.collectAsState()
+    val current = progress ?: return
+
+    val barModifier = modifier.fillMaxWidth().height(3.dp)
+    val trackColor = Color.White.copy(alpha = 0.15f)
+    if (current == ImageLoadProgress.UNKNOWN) {
+        LinearProgressIndicator(modifier = barModifier, color = Accent1, trackColor = trackColor)
+    } else {
+        val animated by animateFloatAsState(targetValue = current, label = "originalLoadProgress")
+        LinearProgressIndicator(
+            progress = { animated },
+            modifier = barModifier,
+            color = Accent1,
+            trackColor = trackColor
+        )
+    }
+}
+
 @Composable
 private fun WallpaperOverlayTopBar(
     onBack: () -> Unit,
@@ -287,12 +431,12 @@ private fun WallpaperOverlayBottomBar(
             .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f))))
             .padding(top = 50.dp, bottom = 22.dp, start = 20.dp, end = 20.dp)
     ) {
-        Text(wallpaper.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 21.sp)
         Text(
-            "${wallpaper.categoryName} · ${wallpaper.resolution} · ${wallpaper.sizeLabel}",
-            color = Color.White.copy(alpha = 0.7f),
-            fontSize = 12.5.sp,
-            modifier = Modifier.padding(top = 3.dp, bottom = 16.dp)
+            wallpaper.title,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = 21.sp,
+            modifier = Modifier.padding(bottom = 16.dp)
         )
         // All four actions in one horizontal row: Favorite, Add to List, Download (fixed-size
         // icon buttons), then Set Wallpaper taking the remaining width.

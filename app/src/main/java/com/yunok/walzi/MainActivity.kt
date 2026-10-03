@@ -52,13 +52,12 @@ class MainActivity : ComponentActivity() {
         // notification's target.
         if (savedInstanceState == null) pendingDeepLink = intent.toDeepLinkTarget()
 
-        // Everything ads-related hangs off this one flag - see AdsConfig. When it's false the
-        // consent form is never shown and the SDK is never initialised.
-        if (AdsConfig.ADS_ENABLED) {
-            ConsentManager.requestConsentInfoUpdate(this) { canRequestAds ->
-                // If the user declined (GDPR), ads simply won't load - the app works normally.
-                if (canRequestAds) AdManager.initialize(this)
-            }
+        // Consent runs on every launch: it decides Analytics consent (Consent Mode) as well as
+        // ads. The form only appears where a regulation applies and the message is published in
+        // AdMob. AdManager.initialize is itself a no-op unless AdsConfig.ADS_ENABLED.
+        ConsentManager.requestConsentInfoUpdate(this) { canRequestAds ->
+            // If the user declined (GDPR), ads simply won't load - the app works normally.
+            if (canRequestAds) AdManager.initialize(this)
         }
 
         setContent {

@@ -36,7 +36,7 @@ fun CategoryTile(
             .clickable(onClick = onClick)
     ) {
         ThumbImage(
-            url = category.imageUrl,
+            url = category.tileImageUrl,
             placeholderKey = category.id,
             size = CATEGORY_TILE_SIZE,
             contentDescription = category.name,

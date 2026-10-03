@@ -20,7 +20,11 @@ data class CategoryDto(
     var countryCodes: List<String>? = null,
 
     @get:PropertyName("createdAt") @set:PropertyName("createdAt")
-    var createdAt: Long = 0
+    var createdAt: Long = 0,
+
+    // Small preview image for category tiles. Optional: older categories fall back to imageUrl.
+    @get:PropertyName("thumbUrl") @set:PropertyName("thumbUrl")
+    var thumbUrl: String = ""
 ) {
     // Firestore requires a no-arg constructor for reflection-based deserialization.
     constructor() : this("", "", 0, null, 0)

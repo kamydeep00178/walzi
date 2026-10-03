@@ -34,7 +34,11 @@ data class WallpaperDto(
     var tags: List<String>? = null,
 
     @get:PropertyName("createdAt") @set:PropertyName("createdAt")
-    var createdAt: Long = 0
+    var createdAt: Long = 0,
+
+    // Small preview image for grids. Optional: older documents without it fall back to imageUrl.
+    @get:PropertyName("thumbUrl") @set:PropertyName("thumbUrl")
+    var thumbUrl: String = ""
 ) {
     constructor() : this("", "", "", "", false, 0, "", "", "", null, 0)
 }

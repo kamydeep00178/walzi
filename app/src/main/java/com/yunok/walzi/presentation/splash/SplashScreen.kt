@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -57,6 +58,9 @@ private val tileGlowColors = listOf(
 
 private const val SPLASH_DURATION_MS = 1800L
 
+/** Background drift speed: same pace as the old 0.6px per 16ms step. */
+private const val SPLASH_SCROLL_PX_PER_MS = 0.6f / 16f
+
 /**
  * Custom in-app splash shown as the first Compose frame (after the system's static
  * androidx.core.splashscreen icon has already appeared/disappeared for cold start).
@@ -68,10 +72,15 @@ fun SplashScreen(onFinished: () -> Unit) {
     val gridState = rememberLazyGridState()
     val repeatedTiles = remember { List(200) { tileGlowColors[it % tileGlowColors.size] } }
 
+    // Frame-synced drift: advance by elapsed time each vsync. A fixed delay(16) isn't aligned to
+    // frames, so some frames got two steps and others none - visible stutter, worst on 90/120Hz.
     LaunchedEffect(Unit) {
+        var lastFrameNanos = withFrameNanos { it }
         while (true) {
-            gridState.scrollBy(0.6f)
-            delay(16)
+            val elapsedMs = withFrameNanos { now ->
+                ((now - lastFrameNanos) / 1_000_000f).also { lastFrameNanos = now }
+            }
+            gridState.scrollBy(elapsedMs * SPLASH_SCROLL_PX_PER_MS)
         }
     }
 

@@ -40,7 +40,8 @@ sealed interface WallpaperDetailIntent : MviIntent {
     data class OpenSetWallpaperSheet(val wallpaperId: String) : WallpaperDetailIntent
     data object DismissSetWallpaperSheet : WallpaperDetailIntent
     data class ConfirmSetWallpaper(val wallpaperId: String, val target: WallpaperTarget) : WallpaperDetailIntent
-    data class Download(val wallpaperId: String) : WallpaperDetailIntent
+    /** [viaReward]: the user just watched a rewarded ad for this download - skip the interstitial after it. */
+    data class Download(val wallpaperId: String, val viaReward: Boolean = false) : WallpaperDetailIntent
 
     // -- Add to List --
     data class OpenAddToListSheet(val wallpaperId: String) : WallpaperDetailIntent

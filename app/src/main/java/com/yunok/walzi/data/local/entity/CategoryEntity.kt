@@ -1,5 +1,6 @@
 package com.yunok.walzi.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.yunok.walzi.domain.model.Category
@@ -10,7 +11,8 @@ data class CategoryEntity(
     val name: String,
     val imageUrl: String,
     val position: Int,
-    val countryCodes: List<String> = emptyList()
+    val countryCodes: List<String> = emptyList(),
+    @ColumnInfo(defaultValue = "") val thumbUrl: String = ""
 )
 
 fun CategoryEntity.toDomain() = Category(
@@ -18,7 +20,8 @@ fun CategoryEntity.toDomain() = Category(
     name = name,
     imageUrl = imageUrl,
     position = position,
-    countryCodes = countryCodes
+    countryCodes = countryCodes,
+    thumbUrl = thumbUrl
 )
 
 fun Category.toEntity() = CategoryEntity(
@@ -26,5 +29,6 @@ fun Category.toEntity() = CategoryEntity(
     name = name,
     imageUrl = imageUrl,
     position = position,
-    countryCodes = countryCodes
+    countryCodes = countryCodes,
+    thumbUrl = thumbUrl
 )

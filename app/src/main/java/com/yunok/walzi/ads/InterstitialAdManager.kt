@@ -9,56 +9,51 @@ import com.google.android.gms.ads.FullScreenContentCallback
 import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.interstitial.InterstitialAd
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "InterstitialAdManager"
 
 /**
- * Manages loading and showing interstitial (full-screen) ads, with frequency
- * capping: shows on the 1st trigger, skips the next 3, shows again on the 5th,
- * skips 3, shows on the 9th, etc. — i.e. one ad shown per 4 triggers.
+ * Loads and shows interstitial (full-screen) ads at natural break points only - after a
+ * wallpaper is set / downloaded, or when opening a category. Never on app open/exit, never
+ * while swiping wallpapers, never from background work.
  *
- * The trigger counter is persisted in SharedPreferences (not just an in-memory
- * field), so the cadence survives app restarts — otherwise a user who force-
- * closes right after seeing an ad would see another one immediately on reopen.
+ * Two caps, both must allow it:
+ *  - Cadence: one ad per [SHOW_EVERY_N_TRIGGERS] triggers, skipping the very first one, so a
+ *    new user's first action is never interrupted (shows on the 2nd, 6th, 10th, ...).
+ *  - Time: at least [MIN_INTERVAL_MS] since the last full-screen ad of any kind (interstitial
+ *    or rewarded - see [markFullScreenAdShown]).
+ * Both are persisted, so they survive app restarts. Nothing shows while the user is ad-free.
  *
- * Typical usage — call `show()` every time the "triggering" action happens
- * (e.g. every time a video finishes, every notification opened, etc.) —
- * the manager itself decides whether THIS particular call actually shows
- * an ad or silently skips it:
- *
- *   val interstitialMgr = remember { InterstitialAdManager() }
- *   LaunchedEffect(Unit) { interstitialMgr.load(context) }
- *
- *   // On some action:
- *   interstitialMgr.show(activity, isPremium)
+ * Usage: call [show] every time a triggering action happens and continue the flow in
+ * onDismissed - it runs after the ad closes, or immediately when this trigger is skipped.
  */
 @Singleton
 class InterstitialAdManager @Inject constructor() {
 
     private var interstitialAd: InterstitialAd? = null
     private var isLoading = false
+    private var isShowing = false
 
-    /** Pre-load the ad. Call this early (e.g. in LaunchedEffect on screen open). */
+    /** Pre-load the ad. Requests made before the SDK finished initialising are dropped. */
     fun load(context: Context) {
         if (!AdsConfig.ADS_ENABLED) return
-        // Requests made before the SDK finished initialising (e.g. consent still pending) are
-        // dropped; show() re-requests on demand and AdViewModel preloads once init completes.
         if (!AdManager.isInitialized.value) return
         if (isLoading || interstitialAd != null) return
         isLoading = true
 
         InterstitialAd.load(
-            context,
+            context.applicationContext,
             AdManager.INTERSTITIAL_AD_UNIT_ID,
             AdRequest.Builder().build(),
             object : InterstitialAdLoadCallback() {
                 override fun onAdLoaded(ad: InterstitialAd) {
-                    Log.d(TAG, "Interstitial loaded ✅")
                     interstitialAd = ad
                     isLoading = false
                 }
+
                 override fun onAdFailedToLoad(error: LoadAdError) {
                     Log.w(TAG, "Interstitial failed to load: ${error.message}")
                     interstitialAd = null
@@ -69,71 +64,74 @@ class InterstitialAdManager @Inject constructor() {
     }
 
     /**
-     * Call this every time the triggering action happens. Internally decides
-     * whether this particular call should actually show an ad (every 4th
-     * trigger) or just skip straight to onDismissed().
-     *
-     * @param onDismissed called after the ad is closed, OR immediately if this
-     * trigger was skipped, OR immediately if the user is premium — callers
-     * should treat onDismissed as "proceed with whatever comes next" in all
-     * three cases, without needing to know which one happened.
+     * Call every time the triggering action happens. Decides by itself whether this call shows
+     * an ad. [onDismissed] always runs exactly once - after the ad, or straight away if skipped.
      */
-    fun show(activity: Activity, isPremium: Boolean = false, onDismissed: () -> Unit = {}) {
-        // Ads switched off (or premium): proceed immediately and, importantly, don't advance
-        // the frequency counter - otherwise re-enabling ads later would start mid-cycle.
-        if (!AdsConfig.ADS_ENABLED || isPremium) { onDismissed(); return }
+    fun show(activity: Activity, onDismissed: () -> Unit = {}) {
+        // Off, or ad-free reward active: proceed immediately and don't advance the counter.
+        if (!AdsConfig.ADS_ENABLED || AdFreeManager.isAdFreeNow()) { onDismissed(); return }
+        // A second tap while an ad is on screen: the first call's onDismissed continues the flow.
+        if (isShowing) return
+        if (activity.isFinishing || activity.isDestroyed) { onDismissed(); return }
 
-        val triggerCount = incrementAndGetTriggerCount(activity)
-        val shouldShowThisTime = triggerCount % SHOW_EVERY_N_TRIGGERS == 1
+        val prefs = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val triggerCount = prefs.getInt(KEY_TRIGGER_COUNT, 0) + 1
+        prefs.edit().putInt(KEY_TRIGGER_COUNT, triggerCount).apply()
 
-        if (!shouldShowThisTime) {
-            Log.d(TAG, "Skipping ad — trigger #$triggerCount (showing every $SHOW_EVERY_N_TRIGGERS)")
+        val cadenceAllows = triggerCount % SHOW_EVERY_N_TRIGGERS == 2
+        val sinceLast = System.currentTimeMillis() - prefs.getLong(KEY_LAST_FULLSCREEN_AT, 0L)
+        if (!cadenceAllows || sinceLast < MIN_INTERVAL_MS) {
             onDismissed()
             return
         }
 
         val ad = interstitialAd
         if (ad == null) {
-            Log.d(TAG, "This trigger should show an ad, but none is loaded yet — showing content immediately")
-            load(activity.applicationContext)
+            load(activity)
             onDismissed()
             return
         }
 
+        val appContext = activity.applicationContext
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
+            override fun onAdShowedFullScreenContent() {
+                markFullScreenAdShown(appContext)
+            }
+
             override fun onAdDismissedFullScreenContent() {
-                Log.d(TAG, "Interstitial dismissed")
+                isShowing = false
                 interstitialAd = null
-                load(activity.applicationContext)   // pre-load next one
+                load(appContext) // pre-load the next one
                 onDismissed()
             }
+
             override fun onAdFailedToShowFullScreenContent(error: AdError) {
                 Log.w(TAG, "Interstitial failed to show: ${error.message}")
+                isShowing = false
                 interstitialAd = null
+                load(appContext)
                 onDismissed()
             }
-            override fun onAdShowedFullScreenContent() {
-                Log.d(TAG, "Interstitial showing (trigger #$triggerCount)")
-            }
         }
+        isShowing = true
         ad.show(activity)
     }
 
-    /** True if an ad is loaded and ready to show. */
-    val isReady: Boolean get() = interstitialAd != null
-
-    private fun incrementAndGetTriggerCount(context: Context): Int {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val next = prefs.getInt(KEY_TRIGGER_COUNT, 0) + 1
-        prefs.edit().putInt(KEY_TRIGGER_COUNT, next).apply()
-        return next
+    /** Records that a full-screen ad (interstitial or rewarded) was just shown - starts the time cap. */
+    fun markFullScreenAdShown(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putLong(KEY_LAST_FULLSCREEN_AT, System.currentTimeMillis()).apply()
     }
 
     companion object {
         private const val PREFS_NAME = "interstitial_ad_prefs"
         private const val KEY_TRIGGER_COUNT = "trigger_count"
+        private const val KEY_LAST_FULLSCREEN_AT = "last_fullscreen_at"
 
-        /** Show 1 ad per this many triggers (currently: 1st, 5th, 9th, ...). */
+        /** One ad per this many triggers (on the 2nd, 6th, 10th, ...). */
         private const val SHOW_EVERY_N_TRIGGERS = 4
+
+        /** Minimum gap between any two full-screen ads. */
+        private val MIN_INTERVAL_MS = TimeUnit.SECONDS.toMillis(90)
     }
 }

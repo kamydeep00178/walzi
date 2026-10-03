@@ -28,6 +28,15 @@
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="${admobAppId}" />
 
+        <!-- Google Consent Mode: Analytics starts with every consent type DENIED, so nothing
+             identifying is stored or sent before the user's choice is known. ConsentManager
+             then calls FirebaseAnalytics.setConsent() with the real decision from the UMP
+             consent form (granted straight away outside regulated regions). -->
+        <meta-data android:name="google_analytics_default_allow_analytics_storage" android:value="false" />
+        <meta-data android:name="google_analytics_default_allow_ad_storage" android:value="false" />
+        <meta-data android:name="google_analytics_default_allow_ad_user_data" android:value="false" />
+        <meta-data android:name="google_analytics_default_allow_ad_personalization_signals" android:value="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

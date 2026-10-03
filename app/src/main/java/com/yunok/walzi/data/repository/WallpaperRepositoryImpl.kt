@@ -229,7 +229,8 @@ class WallpaperRepositoryImpl @Inject constructor(
         name = dto.name,
         imageUrl = dto.imageUrl,
         position = dto.position.toInt(),
-        countryCodes = dto.countryCodes ?: emptyList()
+        countryCodes = dto.countryCodes ?: emptyList(),
+        thumbUrl = dto.thumbUrl
     )
 
     private fun TagDto.toTagEntity() = TagEntity(
@@ -250,7 +251,8 @@ class WallpaperRepositoryImpl @Inject constructor(
         resolution = dto.resolution,
         sizeLabel = dto.sizeLabel,
         createdAt = dto.createdAt,
-        tags = dto.tags ?: emptyList()
+        tags = dto.tags ?: emptyList(),
+        thumbUrl = dto.thumbUrl
     )
 
     private fun String.toWallpaper(dto: WallpaperDto, isFavorite: Boolean) = Wallpaper(
@@ -265,6 +267,7 @@ class WallpaperRepositoryImpl @Inject constructor(
         sizeLabel = dto.sizeLabel,
         createdAt = dto.createdAt,
         isFavorite = isFavorite,
-        tags = dto.tags ?: emptyList()
+        tags = dto.tags ?: emptyList(),
+        thumbUrl = dto.thumbUrl
     )
 }

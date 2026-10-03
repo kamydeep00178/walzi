@@ -12,15 +12,18 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.messaging.FirebaseMessaging
+import com.yunok.walzi.ads.AdFreeManager
 import com.yunok.walzi.domain.repository.WallpaperListRepository
 import com.yunok.walzi.util.AutoRotateScheduler
 import com.yunok.walzi.util.CrashReporter
+import com.yunok.walzi.util.ProgressInterceptor
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -44,6 +47,8 @@ class WalziApp : Application(), ImageLoaderFactory, Configuration.Provider {
         FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(!BuildConfig.DEBUG)
 
         // Ads are initialised from MainActivity, after the consent flow - see AdsConfig.ADS_ENABLED.
+        // Restores a still-running "Remove ads for 24 hours" reward (cheap: one prefs read).
+        AdFreeManager.init(this)
         createNotificationChannel()
         subscribeToDefaultTopic()
         reArmAutoRotateIfEnabled()
@@ -96,6 +101,8 @@ class WalziApp : Application(), ImageLoaderFactory, Configuration.Provider {
                     .maxSizeBytes(250L * 1024 * 1024) // 250MB
                     .build()
             }
+            // Reports real download progress for URLs a screen tracks (full preview progress bar).
+            .okHttpClient { OkHttpClient.Builder().addNetworkInterceptor(ProgressInterceptor()).build() }
             .respectCacheHeaders(false)
             .crossfade(200)
             .build()

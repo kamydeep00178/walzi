@@ -1,8 +1,6 @@
 package com.yunok.walzi.presentation.wallpaperdetail
 
-import android.app.Activity
 import androidx.lifecycle.SavedStateHandle
-import com.yunok.walzi.ads.InterstitialAdManager
 import com.yunok.walzi.domain.model.Wallpaper
 import com.yunok.walzi.domain.model.WallpaperCursor
 import com.yunok.walzi.domain.model.WallpaperSource
@@ -25,7 +23,6 @@ class WallpaperDetailViewModel @Inject constructor(
     private val listRepository: WallpaperListRepository,
     private val wallpaperSetter: WallpaperSetter,
     private val imageDownloader: ImageDownloader,
-    private val interstitialAdManager: InterstitialAdManager,
     savedStateHandle: SavedStateHandle
 ) : BaseViewModel<WallpaperDetailIntent, WallpaperDetailState, WallpaperDetailEffect>(WallpaperDetailState()) {
 
@@ -61,7 +58,7 @@ class WallpaperDetailViewModel @Inject constructor(
                 setState { copy(showTargetSheet = true, targetWallpaperId = intent.wallpaperId) }
             WallpaperDetailIntent.DismissSetWallpaperSheet -> setState { copy(showTargetSheet = false) }
             is WallpaperDetailIntent.ConfirmSetWallpaper -> confirmSetWallpaper(intent.wallpaperId, intent.target)
-            is WallpaperDetailIntent.Download -> download(intent.wallpaperId)
+            is WallpaperDetailIntent.Download -> download(intent.wallpaperId, intent.viaReward)
             is WallpaperDetailIntent.OpenAddToListSheet ->
                 setState { copy(showAddToListSheet = true, addToListWallpaperId = intent.wallpaperId, newListNameDraft = "") }
             WallpaperDetailIntent.DismissAddToListSheet ->
@@ -82,11 +79,6 @@ class WallpaperDetailViewModel @Inject constructor(
                 setState { copy(newListNameDraft = "") }
             }
         }
-    }
-
-    /** Called by the screen after a successful set/download. The Activity is used only for this call. */
-    fun showInterstitial(activity: Activity) {
-        interstitialAdManager.show(activity)
     }
 
     private fun loadInitial() {
@@ -197,7 +189,7 @@ class WallpaperDetailViewModel @Inject constructor(
         if (result.isSuccess) setEffect(WallpaperDetailEffect.ActionCompleted)
     }
 
-    private suspend fun download(wallpaperId: String) {
+    private suspend fun download(wallpaperId: String, viaReward: Boolean) {
         val wallpaper = currentState.wallpapers.firstOrNull { it.id == wallpaperId } ?: return
         setState { copy(isDownloading = true) }
         val result = imageDownloader.downloadToGallery(wallpaper.imageUrl, wallpaper.title)
@@ -207,7 +199,8 @@ class WallpaperDetailViewModel @Inject constructor(
                 if (result.isSuccess) "Saved to gallery" else "Download failed. Try again."
             )
         )
-        if (result.isSuccess) setEffect(WallpaperDetailEffect.ActionCompleted)
+        // No interstitial right after a rewarded ad the user just watched for this download.
+        if (result.isSuccess && !viaReward) setEffect(WallpaperDetailEffect.ActionCompleted)
     }
 
     private fun String.toWallpaperSource(categoryId: String?): WallpaperSource = when (this) {

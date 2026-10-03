@@ -31,16 +31,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.SubcomposeAsyncImage
-import coil.compose.SubcomposeAsyncImageContent
+import coil.size.Size
+import com.yunok.walzi.ads.AdViewModel
+import com.yunok.walzi.ads.NativeAdCard
 import com.yunok.walzi.data.local.entity.NotificationEntity
 import com.yunok.walzi.presentation.components.ShimmerPlaceholder
+import com.yunok.walzi.presentation.components.ThumbImage
 import com.yunok.walzi.presentation.components.placeholderColorFor
 import com.yunok.walzi.presentation.navigation.DeepLinkTarget
 import com.yunok.walzi.presentation.theme.Accent3
@@ -49,13 +50,21 @@ import com.yunok.walzi.presentation.theme.TextPrimary
 import com.yunok.walzi.presentation.theme.TextTertiary
 import java.util.concurrent.TimeUnit
 
+/** The single native ad row sits after this many notifications. */
+private const val NOTIFICATIONS_AD_AFTER = 3
+
+/** 48dp thumbnail - decode small (covers up to ~3x density). */
+private val NOTIFICATION_THUMB_SIZE = Size(160, 160)
+
 @Composable
 fun NotificationsScreen(
     onBack: () -> Unit,
     onNavigate: (DeepLinkTarget) -> Unit,
-    viewModel: NotificationsViewModel = hiltViewModel()
+    viewModel: NotificationsViewModel = hiltViewModel(),
+    adViewModel: AdViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(adViewModel) { adViewModel.requestNativeAds(1) }
 
     LaunchedEffect(Unit) {
         viewModel.effect.collect { effect ->
@@ -81,12 +90,29 @@ fun NotificationsScreen(
                 CircularProgressIndicator(color = Accent3)
             }
             state.notifications.isEmpty() -> EmptyNotificationsState()
-            else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(state.notifications, key = { it.id }) { notification ->
-                    NotificationRow(
-                        notification = notification,
-                        onClick = { viewModel.sendIntent(NotificationsIntent.NotificationTapped(notification)) }
-                    )
+            else -> {
+                val notifications = state.notifications
+                val nativeAd = adViewModel.nativeAds.firstOrNull()
+                // One native ad row, only where real notifications continue after it.
+                val adAfter = if (nativeAd != null && notifications.size > NOTIFICATIONS_AD_AFTER) NOTIFICATIONS_AD_AFTER else notifications.size
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(notifications.subList(0, adAfter), key = { it.id }) { notification ->
+                        NotificationRow(
+                            notification = notification,
+                            onClick = { viewModel.sendIntent(NotificationsIntent.NotificationTapped(notification)) }
+                        )
+                    }
+                    if (adAfter < notifications.size) {
+                        item(key = "native_ad", contentType = "native_ad") {
+                            NativeAdCard(nativeAd = nativeAd, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                        }
+                        items(notifications.subList(adAfter, notifications.size), key = { it.id }) { notification ->
+                            NotificationRow(
+                                notification = notification,
+                                onClick = { viewModel.sendIntent(NotificationsIntent.NotificationTapped(notification)) }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -137,14 +163,12 @@ private fun NotificationRow(notification: NotificationEntity, onClick: () -> Uni
                 .clip(RoundedCornerShape(10.dp))
         ) {
             if (notification.imageUrl != null) {
-                SubcomposeAsyncImage(
-                    model = notification.imageUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                    loading = { ShimmerPlaceholder(baseColor = placeholderColorFor(notification.id), modifier = Modifier.fillMaxSize()) },
-                    error = { ShimmerPlaceholder(baseColor = placeholderColorFor(notification.id), modifier = Modifier.fillMaxSize()) },
-                    success = { SubcomposeAsyncImageContent() }
+                // ThumbImage, not SubcomposeAsyncImage: no extra composition pass per row.
+                ThumbImage(
+                    url = notification.imageUrl,
+                    placeholderKey = notification.id,
+                    size = NOTIFICATION_THUMB_SIZE,
+                    modifier = Modifier.fillMaxSize()
                 )
             } else {
                 ShimmerPlaceholder(baseColor = placeholderColorFor(notification.id), modifier = Modifier.fillMaxSize())

@@ -20,7 +20,8 @@ data class WallpaperCacheEntity(
     val resolution: String,
     val sizeLabel: String,
     val createdAt: Long,
-    val tags: List<String> = emptyList()
+    val tags: List<String> = emptyList(),
+    @ColumnInfo(defaultValue = "") val thumbUrl: String = ""
 )
 
 fun WallpaperCacheEntity.toDomain(isFavorite: Boolean) = Wallpaper(
@@ -35,5 +36,6 @@ fun WallpaperCacheEntity.toDomain(isFavorite: Boolean) = Wallpaper(
     sizeLabel = sizeLabel,
     createdAt = createdAt,
     isFavorite = isFavorite,
-    tags = tags
+    tags = tags,
+    thumbUrl = thumbUrl
 )

@@ -8,6 +8,7 @@ import com.yunok.walzi.domain.model.toCursor
 import com.yunok.walzi.domain.repository.WallpaperRepository
 import com.yunok.walzi.presentation.common.BaseViewModel
 import com.yunok.walzi.presentation.common.runSuspendCatching
+import com.yunok.walzi.util.AnalyticsTracker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.catch
@@ -16,6 +17,7 @@ import javax.inject.Inject
 @HiltViewModel
 class CategoryDetailViewModel @Inject constructor(
     private val repository: WallpaperRepository,
+    private val analytics: AnalyticsTracker,
     savedStateHandle: SavedStateHandle
 ) : BaseViewModel<CategoryDetailIntent, CategoryDetailState, CategoryDetailEffect>(CategoryDetailState()) {
 
@@ -24,6 +26,7 @@ class CategoryDetailViewModel @Inject constructor(
     private var cursor: WallpaperCursor? = null
     private var hasStartedLivePagination = false
     private var cacheCollectionJob: Job? = null
+    private var categoryViewLogged = false
 
     init {
         setState { copy(categoryId = categoryId) }
@@ -33,6 +36,11 @@ class CategoryDetailViewModel @Inject constructor(
                 .collect { categories ->
                     categories.firstOrNull { it.id == categoryId }?.let { match ->
                         setState { copy(categoryName = match.name) }
+                        // Once per screen visit, as soon as the name is known (categories re-emit).
+                        if (!categoryViewLogged) {
+                            categoryViewLogged = true
+                            analytics.categoryView(categoryId, match.name)
+                        }
                     }
                 }
         }

@@ -40,8 +40,8 @@ android {
         applicationId = "com.yunok.walzi"
         minSdk = 24
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.0.1"
+        versionCode = 9
+        versionName = "1.0.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -49,6 +49,8 @@ android {
         release {
             buildConfigField("Boolean", "DEBUG_BUILD", "false")
             manifestPlaceholders["admobAppId"] = releaseAdmobAppId
+            // Firebase Analytics collects only in release builds (see AndroidManifest + WalziApp).
+            manifestPlaceholders["analyticsEnabled"] = "true"
 
             isMinifyEnabled = true
             isShrinkResources = true
@@ -60,6 +62,8 @@ android {
         debug {
             buildConfigField("Boolean", "DEBUG_BUILD", "true")
             manifestPlaceholders["admobAppId"] = testAdmobAppId
+            // No Analytics from debug builds - testing must not pollute production stats.
+            manifestPlaceholders["analyticsEnabled"] = "false"
 
             isMinifyEnabled = false
         }

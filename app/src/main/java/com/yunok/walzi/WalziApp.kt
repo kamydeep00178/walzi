@@ -10,6 +10,7 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.messaging.FirebaseMessaging
 import com.yunok.walzi.ads.AdFreeManager
@@ -45,6 +46,8 @@ class WalziApp : Application(), ImageLoaderFactory, Configuration.Provider {
         super.onCreate()
         // Crash reports only from release builds, so debugging crashes don't pollute the dashboard.
         FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(!BuildConfig.DEBUG)
+        // Same for Analytics: production data only (the manifest flag already covers first launch).
+        FirebaseAnalytics.getInstance(this).setAnalyticsCollectionEnabled(!BuildConfig.DEBUG)
 
         // Ads are initialised from MainActivity, after the consent flow - see AdsConfig.ADS_ENABLED.
         // Restores a still-running "Remove ads for 24 hours" reward (cheap: one prefs read).

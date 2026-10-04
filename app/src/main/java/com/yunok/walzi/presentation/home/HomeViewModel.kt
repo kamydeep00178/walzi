@@ -8,6 +8,7 @@ import com.yunok.walzi.domain.repository.WallpaperListRepository
 import com.yunok.walzi.domain.repository.WallpaperRepository
 import com.yunok.walzi.presentation.common.BaseViewModel
 import com.yunok.walzi.presentation.common.runSuspendCatching
+import com.yunok.walzi.util.AnalyticsTracker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -36,7 +37,8 @@ import javax.inject.Inject
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val repository: WallpaperRepository,
-    private val listRepository: WallpaperListRepository
+    private val listRepository: WallpaperListRepository,
+    private val analytics: AnalyticsTracker
 ) : BaseViewModel<HomeIntent, HomeState, HomeEffect>(HomeState()) {
 
     private val cursors = mutableMapOf<FeedTab, WallpaperCursor>()
@@ -86,6 +88,12 @@ class HomeViewModel @Inject constructor(
             is HomeIntent.LoadNextPage -> loadNextPage(intent.tab)
             is HomeIntent.ToggleFavorite -> repository.toggleFavorite(intent.wallpaperId)
         }
+    }
+
+    /** Analytics: a category tile was tapped in the Collections tab. */
+    fun trackCategoryClick(categoryId: String) {
+        val name = currentState.categories.firstOrNull { it.id == categoryId }?.name.orEmpty()
+        analytics.categoryClick(categoryId, name, source = "collections")
     }
 
     private fun selectTab(tab: FeedTab) {

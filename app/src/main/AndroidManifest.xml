@@ -28,6 +28,10 @@
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="${admobAppId}" />
 
+        <!-- Analytics collection per build type: true for release, false for debug
+             (manifestPlaceholders in build.gradle.kts). -->
+        <meta-data android:name="firebase_analytics_collection_enabled" android:value="${analyticsEnabled}" />
+
         <!-- Google Consent Mode: Analytics starts with every consent type DENIED, so nothing
              identifying is stored or sent before the user's choice is known. ConsentManager
              then calls FirebaseAnalytics.setConsent() with the real decision from the UMP

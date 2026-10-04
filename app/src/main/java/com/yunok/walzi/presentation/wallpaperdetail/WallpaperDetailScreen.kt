@@ -142,6 +142,12 @@ fun WallpaperDetailScreen(
                 pagerState.currentPage.coerceIn(0, state.wallpapers.lastIndex)
             )
 
+            // Analytics: one wallpaper_view per wallpaper the pager settles on (the VM dedupes).
+            val settledWallpaperId = state.wallpapers.getOrNull(pagerState.settledPage)?.id
+            LaunchedEffect(settledWallpaperId) {
+                settledWallpaperId?.let(viewModel::onWallpaperViewed)
+            }
+
             // Prefetch the next page a few swipes before the user actually hits the end.
             LaunchedEffect(pagerState.currentPage, state.wallpapers.size) {
                 if (pagerState.currentPage >= state.wallpapers.size - 3) {
@@ -313,7 +319,7 @@ fun WallpaperDetailScreen(
 }
 
 /** How long the user must stay on a wallpaper before its full-resolution original loads. */
-private const val ORIGINAL_LOAD_DELAY_MS = 1000L
+private const val ORIGINAL_LOAD_DELAY_MS = 500L
 
 /**
  * One full-screen page, in two layers:

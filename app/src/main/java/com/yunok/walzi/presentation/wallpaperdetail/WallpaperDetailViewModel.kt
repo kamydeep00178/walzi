@@ -9,6 +9,7 @@ import com.yunok.walzi.domain.repository.WallpaperListRepository
 import com.yunok.walzi.domain.repository.WallpaperRepository
 import com.yunok.walzi.presentation.common.BaseViewModel
 import com.yunok.walzi.presentation.common.runSuspendCatching
+import com.yunok.walzi.util.AnalyticsTracker
 import com.yunok.walzi.util.ImageDownloader
 import com.yunok.walzi.util.WallpaperSetter
 import com.yunok.walzi.util.WallpaperTarget
@@ -23,6 +24,7 @@ class WallpaperDetailViewModel @Inject constructor(
     private val listRepository: WallpaperListRepository,
     private val wallpaperSetter: WallpaperSetter,
     private val imageDownloader: ImageDownloader,
+    private val analytics: AnalyticsTracker,
     savedStateHandle: SavedStateHandle
 ) : BaseViewModel<WallpaperDetailIntent, WallpaperDetailState, WallpaperDetailEffect>(WallpaperDetailState()) {
 
@@ -33,6 +35,8 @@ class WallpaperDetailViewModel @Inject constructor(
     private val queryParam: String? = savedStateHandle.get<String>("query")
 
     private var cursor: WallpaperCursor? = null
+    private var openLogged = false
+    private var lastViewedWallpaperId: String? = null
 
     /** What the first load produced: the pager's list, where to open it, and whether more pages exist. */
     private data class InitialLoad(val wallpapers: List<Wallpaper>, val index: Int, val endReached: Boolean)
@@ -86,6 +90,13 @@ class WallpaperDetailViewModel @Inject constructor(
             setState { copy(isLoading = true, hasError = false) }
             runSuspendCatching { fetchInitial() }
                 .onSuccess { load ->
+                    // Analytics: the wallpaper the user tapped (logged once, not again on Retry).
+                    if (!openLogged) {
+                        load.wallpapers.getOrNull(load.index)?.let {
+                            openLogged = true
+                            analytics.wallpaperOpen(it, sourceParam)
+                        }
+                    }
                     setState {
                         copy(
                             wallpapers = load.wallpapers,
@@ -98,6 +109,14 @@ class WallpaperDetailViewModel @Inject constructor(
                 }
                 .onFailure { setState { copy(isLoading = false, hasError = true) } }
         }
+    }
+
+    /** Analytics: called by the screen whenever the pager settles on a wallpaper (deduplicated). */
+    fun onWallpaperViewed(wallpaperId: String) {
+        if (wallpaperId == lastViewedWallpaperId) return
+        val wallpaper = currentState.wallpapers.firstOrNull { it.id == wallpaperId } ?: return
+        lastViewedWallpaperId = wallpaperId
+        analytics.wallpaperView(wallpaper, sourceParam)
     }
 
     private suspend fun fetchInitial(): InitialLoad = when (sourceParam) {
@@ -175,6 +194,7 @@ class WallpaperDetailViewModel @Inject constructor(
         val wallpaper = currentState.wallpapers.firstOrNull { it.id == wallpaperId } ?: return
         setState { copy(isApplyingWallpaper = true, showTargetSheet = false) }
         val result = wallpaperSetter.setWallpaper(wallpaper.imageUrl, target)
+        analytics.setWallpaper(wallpaper, target, result.isSuccess)
         setState { copy(isApplyingWallpaper = false) }
         val label = when (target) {
             WallpaperTarget.HOME -> "Home Screen"
@@ -193,6 +213,7 @@ class WallpaperDetailViewModel @Inject constructor(
         val wallpaper = currentState.wallpapers.firstOrNull { it.id == wallpaperId } ?: return
         setState { copy(isDownloading = true) }
         val result = imageDownloader.downloadToGallery(wallpaper.imageUrl, wallpaper.title)
+        analytics.download(wallpaper, result.isSuccess, viaReward)
         setState { copy(isDownloading = false) }
         setEffect(
             WallpaperDetailEffect.ShowMessage(

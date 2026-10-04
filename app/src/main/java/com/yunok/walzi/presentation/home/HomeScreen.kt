@@ -175,7 +175,10 @@ fun HomeScreen(
                 CollectionsGrid(
                     categories = state.categories,
                     nativeAd = nativeAds.getOrNull(NATIVE_ADS_PER_FEED),
-                    onCategoryClick = onCategoryClickWithAd
+                    onCategoryClick = { id ->
+                        viewModel.trackCategoryClick(id)
+                        onCategoryClickWithAd(id)
+                    }
                 )
             } else {
                 // Per-tab lambdas capture only stable values (tab / viewModel) - never `state` -

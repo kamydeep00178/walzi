@@ -11,7 +11,8 @@ import com.yunok.walzi.presentation.common.BaseViewModel
 import com.yunok.walzi.presentation.common.runSuspendCatching
 import com.yunok.walzi.util.AnalyticsTracker
 import com.yunok.walzi.util.ImageDownloader
-import com.yunok.walzi.util.WallpaperSetter
+import com.yunok.walzi.util.WallpaperAdjustments
+import com.yunok.walzi.util.WallpaperApplier
 import com.yunok.walzi.util.WallpaperTarget
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -22,7 +23,7 @@ import javax.inject.Inject
 class WallpaperDetailViewModel @Inject constructor(
     private val repository: WallpaperRepository,
     private val listRepository: WallpaperListRepository,
-    private val wallpaperSetter: WallpaperSetter,
+    private val wallpaperApplier: WallpaperApplier,
     private val imageDownloader: ImageDownloader,
     private val analytics: AnalyticsTracker,
     savedStateHandle: SavedStateHandle
@@ -61,7 +62,9 @@ class WallpaperDetailViewModel @Inject constructor(
             is WallpaperDetailIntent.OpenSetWallpaperSheet ->
                 setState { copy(showTargetSheet = true, targetWallpaperId = intent.wallpaperId) }
             WallpaperDetailIntent.DismissSetWallpaperSheet -> setState { copy(showTargetSheet = false) }
-            is WallpaperDetailIntent.ConfirmSetWallpaper -> confirmSetWallpaper(intent.wallpaperId, intent.target)
+            is WallpaperDetailIntent.ConfirmSetWallpaper ->
+                confirmSetWallpaper(intent.wallpaperId, intent.target, intent.adjustments)
+            WallpaperDetailIntent.Undo -> undo()
             is WallpaperDetailIntent.Download -> download(intent.wallpaperId, intent.viaReward)
             is WallpaperDetailIntent.OpenAddToListSheet ->
                 setState { copy(showAddToListSheet = true, addToListWallpaperId = intent.wallpaperId, newListNameDraft = "") }
@@ -190,11 +193,16 @@ class WallpaperDetailViewModel @Inject constructor(
             .onFailure { setState { copy(isLoadingMore = false) } }
     }
 
-    private suspend fun confirmSetWallpaper(wallpaperId: String, target: WallpaperTarget) {
+    private suspend fun confirmSetWallpaper(
+        wallpaperId: String,
+        target: WallpaperTarget,
+        adjustments: WallpaperAdjustments
+    ) {
         val wallpaper = currentState.wallpapers.firstOrNull { it.id == wallpaperId } ?: return
         setState { copy(isApplyingWallpaper = true, showTargetSheet = false) }
-        val result = wallpaperSetter.setWallpaper(wallpaper.imageUrl, target)
-        analytics.setWallpaper(wallpaper, target, result.isSuccess)
+        // Through the applier: records History so the user can Undo or apply it again later.
+        val result = wallpaperApplier.apply(wallpaper, target, adjustments)
+        analytics.setWallpaper(wallpaper, target, result.isSuccess, adjusted = !adjustments.isDefault)
         setState { copy(isApplyingWallpaper = false) }
         val label = when (target) {
             WallpaperTarget.HOME -> "Home Screen"
@@ -202,11 +210,25 @@ class WallpaperDetailViewModel @Inject constructor(
             WallpaperTarget.BOTH -> "Home & Lock Screen"
         }
         setEffect(
-            WallpaperDetailEffect.ShowMessage(
-                if (result.isSuccess) "Wallpaper set to $label" else "Couldn't set wallpaper. Try again."
-            )
+            if (result.isSuccess) {
+                WallpaperDetailEffect.ShowMessage("Wallpaper set to $label", undoable = wallpaperApplier.canUndo)
+            } else {
+                WallpaperDetailEffect.ShowMessage("Couldn't set wallpaper. Try again.")
+            }
         )
         if (result.isSuccess) setEffect(WallpaperDetailEffect.ActionCompleted)
+    }
+
+    private suspend fun undo() {
+        setState { copy(isApplyingWallpaper = true) }
+        val result = wallpaperApplier.undo()
+        analytics.undo(result.isSuccess)
+        setState { copy(isApplyingWallpaper = false) }
+        setEffect(
+            WallpaperDetailEffect.ShowMessage(
+                if (result.isSuccess) "Previous wallpaper restored" else "Couldn't restore the previous wallpaper."
+            )
+        )
     }
 
     private suspend fun download(wallpaperId: String, viaReward: Boolean) {

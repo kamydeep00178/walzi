@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.lifecycleScope
 import com.yunok.walzi.ads.AdManager
 import com.yunok.walzi.ads.AdsConfig
 import com.yunok.walzi.ads.ConsentManager
@@ -21,7 +22,12 @@ import com.yunok.walzi.presentation.navigation.AppRoot
 import com.yunok.walzi.presentation.navigation.DeepLinkTarget
 import com.yunok.walzi.presentation.splash.SplashScreen
 import com.yunok.walzi.presentation.theme.WalziTheme
+import com.yunok.walzi.util.SplashWallpapers
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -33,17 +39,40 @@ class MainActivity : ComponentActivity() {
 
         private const val PREFS_NAME = "walzi_prefs"
         private const val KEY_NOTIFICATION_PERMISSION_ASKED = "notification_permission_asked"
+
+        private const val SPLASH_LOOKUP_TIMEOUT_MS = 400L
+        private const val PREFETCH_DELAY_MS = 6_000L
     }
 
     /** A notification tap waiting to be applied by AppRoot; cleared once consumed. */
     private var pendingDeepLink by mutableStateOf<DeepLinkTarget?>(null)
 
+    @Inject lateinit var splashWallpapers: SplashWallpapers
+
+    /** Cached top-wallpaper thumbnails for the splash grid; null while still being looked up. */
+    private var splashImages by mutableStateOf<List<String>?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // System splash: a static icon shown for the brief instant before the first Compose
         // frame draws on cold start. It disappears the moment setContent below renders -
         // our own animated SplashScreen composable then takes over as the branded experience.
-        installSplashScreen()
+        val systemSplash = installSplashScreen()
         super.onCreate(savedInstanceState)
+
+        // Splash grid: real top wallpapers if they're already cached on the phone, else the
+        // glass tiles. The system splash stays up for the tiny moment this check takes (a Room
+        // read + disk-cache lookup, capped at 400 ms), so the grid never switches style mid-way.
+        systemSplash.setKeepOnScreenCondition { splashImages == null }
+        lifecycleScope.launch {
+            splashImages = withTimeoutOrNull(SPLASH_LOOKUP_TIMEOUT_MS) { splashWallpapers.cachedUrls() }
+                ?.takeIf { it.size >= SplashWallpapers.MIN_FOR_SPLASH }
+                .orEmpty()
+        }
+        // Warm the cache for the next launch, after start-up work has settled.
+        lifecycleScope.launch {
+            delay(PREFETCH_DELAY_MS)
+            splashWallpapers.prefetchTop()
+        }
 
         requestNotificationPermissionIfNeeded()
 
@@ -64,7 +93,7 @@ class MainActivity : ComponentActivity() {
             WalziTheme {
                 var showSplash by remember { mutableStateOf(true) }
                 if (showSplash) {
-                    SplashScreen(onFinished = { showSplash = false })
+                    SplashScreen(images = splashImages.orEmpty(), onFinished = { showSplash = false })
                 } else {
                     AppRoot(
                         pendingDeepLink = pendingDeepLink,

@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -39,6 +40,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yunok.walzi.ads.AdViewModel
 import com.yunok.walzi.ads.BannerAdComposable
 import com.yunok.walzi.ads.NATIVE_ADS_PER_FEED
+import com.yunok.walzi.presentation.components.CardStyle
 import com.yunok.walzi.presentation.components.ErrorState
 import com.yunok.walzi.presentation.components.wallpaperCardsWithAds
 import com.yunok.walzi.presentation.theme.Accent3
@@ -93,6 +95,8 @@ fun CategoryDetailScreen(
                     val gridState = rememberLazyStaggeredGridState()
                     val wallpapers = state.wallpapers
                     val currentOnWallpaperClick by rememberUpdatedState(onWallpaperClick)
+                // Cards already animated in, so each animates only once.
+                val dealtIds = remember { mutableSetOf<String>() }
 
                     // Re-evaluated on every scroll AND every list-size change (the effect restarts
                     // when a page lands), so fast scrolling can't silently stall pagination.
@@ -118,7 +122,9 @@ fun CategoryDetailScreen(
                         wallpaperCardsWithAds(
                             wallpapers = wallpapers,
                             nativeAds = adViewModel.nativeAds,
-                            onWallpaperClick = { id -> currentOnWallpaperClick(id) }
+                            onWallpaperClick = { id -> currentOnWallpaperClick(id) },
+                            style = CardStyle.CATEGORY,
+                            dealtIds = dealtIds
                         )
                         if (state.isLoadingMore) {
                             item(key = "loading_more", span = StaggeredGridItemSpan.FullLine, contentType = "loading") {

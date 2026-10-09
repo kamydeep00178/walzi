@@ -5,6 +5,7 @@ import com.yunok.walzi.domain.model.WallpaperList
 import com.yunok.walzi.presentation.common.MviEffect
 import com.yunok.walzi.presentation.common.MviIntent
 import com.yunok.walzi.presentation.common.MviState
+import com.yunok.walzi.util.WallpaperAdjustments
 import com.yunok.walzi.util.WallpaperTarget
 
 data class WallpaperDetailState(
@@ -39,7 +40,13 @@ sealed interface WallpaperDetailIntent : MviIntent {
     data class ToggleFavorite(val wallpaperId: String) : WallpaperDetailIntent
     data class OpenSetWallpaperSheet(val wallpaperId: String) : WallpaperDetailIntent
     data object DismissSetWallpaperSheet : WallpaperDetailIntent
-    data class ConfirmSetWallpaper(val wallpaperId: String, val target: WallpaperTarget) : WallpaperDetailIntent
+    data class ConfirmSetWallpaper(
+        val wallpaperId: String,
+        val target: WallpaperTarget,
+        val adjustments: WallpaperAdjustments = WallpaperAdjustments.NONE
+    ) : WallpaperDetailIntent
+    /** Restore the wallpaper Walzi applied before the last one (Undo on the snackbar). */
+    data object Undo : WallpaperDetailIntent
     /** [viaReward]: the user just watched a rewarded ad for this download - skip the interstitial after it. */
     data class Download(val wallpaperId: String, val viaReward: Boolean = false) : WallpaperDetailIntent
 
@@ -52,7 +59,8 @@ sealed interface WallpaperDetailIntent : MviIntent {
 }
 
 sealed interface WallpaperDetailEffect : MviEffect {
-    data class ShowMessage(val text: String) : WallpaperDetailEffect
+    /** [undoable]: show an "Undo" action on the snackbar (right after setting a wallpaper). */
+    data class ShowMessage(val text: String, val undoable: Boolean = false) : WallpaperDetailEffect
     /** A wallpaper was just set / saved successfully - a natural (frequency-capped) moment for an interstitial. */
     data object ActionCompleted : WallpaperDetailEffect
 }

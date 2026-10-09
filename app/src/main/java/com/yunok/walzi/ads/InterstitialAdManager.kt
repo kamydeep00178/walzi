@@ -2,6 +2,7 @@ package com.yunok.walzi.ads
 
 import android.app.Activity
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import com.google.android.gms.ads.AdError
 import com.google.android.gms.ads.AdRequest
@@ -27,6 +28,9 @@ private const val TAG = "InterstitialAdManager"
  *    or rewarded - see [markFullScreenAdShown]).
  * Both are persisted, so they survive app restarts. Nothing shows while the user is ad-free.
  *
+ * A loaded ad older than [AD_MAX_AGE_MS] is discarded and reloaded instead of being shown stale
+ * (AdMob full-screen ads expire after about an hour).
+ *
  * Usage: call [show] every time a triggering action happens and continue the flow in
  * onDismissed - it runs after the ad closes, or immediately when this trigger is skipped.
  */
@@ -34,6 +38,7 @@ private const val TAG = "InterstitialAdManager"
 class InterstitialAdManager @Inject constructor() {
 
     private var interstitialAd: InterstitialAd? = null
+    private var loadedAtElapsed = 0L
     private var isLoading = false
     private var isShowing = false
 
@@ -41,7 +46,7 @@ class InterstitialAdManager @Inject constructor() {
     fun load(context: Context) {
         if (!AdsConfig.ADS_ENABLED) return
         if (!AdManager.isInitialized.value) return
-        if (isLoading || interstitialAd != null) return
+        if (isLoading || freshAd() != null) return
         isLoading = true
 
         InterstitialAd.load(
@@ -51,6 +56,7 @@ class InterstitialAdManager @Inject constructor() {
             object : InterstitialAdLoadCallback() {
                 override fun onAdLoaded(ad: InterstitialAd) {
                     interstitialAd = ad
+                    loadedAtElapsed = SystemClock.elapsedRealtime()
                     isLoading = false
                 }
 
@@ -85,7 +91,7 @@ class InterstitialAdManager @Inject constructor() {
             return
         }
 
-        val ad = interstitialAd
+        val ad = freshAd()
         if (ad == null) {
             load(activity)
             onDismissed()
@@ -117,6 +123,17 @@ class InterstitialAdManager @Inject constructor() {
         ad.show(activity)
     }
 
+    /** The loaded ad, or null - an expired one is dropped so it gets reloaded. */
+    private fun freshAd(): InterstitialAd? {
+        val ad = interstitialAd ?: return null
+        if (SystemClock.elapsedRealtime() - loadedAtElapsed > AD_MAX_AGE_MS) {
+            Log.d(TAG, "Dropping expired interstitial")
+            interstitialAd = null
+            return null
+        }
+        return ad
+    }
+
     /** Records that a full-screen ad (interstitial or rewarded) was just shown - starts the time cap. */
     fun markFullScreenAdShown(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -133,5 +150,8 @@ class InterstitialAdManager @Inject constructor() {
 
         /** Minimum gap between any two full-screen ads. */
         private val MIN_INTERVAL_MS = TimeUnit.SECONDS.toMillis(90)
+
+        /** AdMob full-screen ads expire after ~1 hour; drop ours a little before that. */
+        private val AD_MAX_AGE_MS = TimeUnit.MINUTES.toMillis(55)
     }
 }

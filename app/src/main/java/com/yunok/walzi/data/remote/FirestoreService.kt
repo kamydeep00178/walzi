@@ -5,6 +5,8 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.Query
 import com.yunok.walzi.data.model.CategoryDto
+import com.yunok.walzi.data.model.DuoConfigDto
+import com.yunok.walzi.data.model.DuoDto
 import com.yunok.walzi.data.model.TagDto
 import com.yunok.walzi.data.model.WallpaperDto
 import com.yunok.walzi.domain.model.WallpaperCursor
@@ -115,6 +117,18 @@ class FirestoreService @Inject constructor(
     suspend fun getWallpaperById(id: String): WallpaperDto? =
         firestore.collection("wallpapers").document(id).get().await()
             .toObject(WallpaperDto::class.java)
+
+    /** All Duos, newest first. A small, curated set - no pagination needed. */
+    suspend fun getDuos(): List<Pair<String, DuoDto>> =
+        firestore.collection("duos")
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .get().await()
+            .documents.mapNotNull { doc -> doc.toObject(DuoDto::class.java)?.let { doc.id to it } }
+
+    /** The Duo banner settings, or null if the admin portal never saved them. */
+    suspend fun getDuoConfig(): DuoConfigDto? =
+        firestore.collection("app_config").document("duo").get().await()
+            .toObject(DuoConfigDto::class.java)
 
     /** Chunks of 10 (Firestore's whereIn limit) are fetched in parallel rather than one by one. */
     suspend fun getWallpapersByIds(ids: List<String>): List<Pair<String, WallpaperDto>> {

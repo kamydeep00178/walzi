@@ -1,6 +1,7 @@
 package com.yunok.walzi.presentation.home
 
 import com.yunok.walzi.domain.model.Category
+import com.yunok.walzi.domain.model.DuoConfig
 import com.yunok.walzi.domain.model.Wallpaper
 import com.yunok.walzi.domain.model.WallpaperList
 import com.yunok.walzi.presentation.common.MviEffect
@@ -35,7 +36,9 @@ data class HomeState(
     val playlists: List<PlaylistPreview> = emptyList(),
     val recent: TabState = TabState(),
     val popular: TabState = TabState(),
-    val favorites: TabState = TabState()
+    val favorites: TabState = TabState(),
+    /** Duo banner at the top of the Collections tab; null / not visible = hidden. */
+    val duoConfig: DuoConfig? = null
 ) : MviState {
     /** Collections renders straight from [categories], so it has no list state of its own. */
     fun tab(tab: FeedTab): TabState = when (tab) {

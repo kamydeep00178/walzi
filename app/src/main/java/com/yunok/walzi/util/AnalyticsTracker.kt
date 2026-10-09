@@ -19,7 +19,13 @@ import javax.inject.Singleton
  *  - wallpaper_open     wallpaper tapped -> full preview   wallpaper_*, category_*, source
  *  - wallpaper_view     each wallpaper shown in preview    wallpaper_*, category_*, source
  *  - wallpaper_download download finished                  wallpaper_*, category_*, success, via_reward
- *  - set_wallpaper      set-wallpaper finished             wallpaper_*, category_*, target, success
+ *  - set_wallpaper      set-wallpaper finished             wallpaper_*, category_*, target, adjusted, success
+ *  - wallpaper_undo     Undo tapped after setting          success
+ *  - surprise_spin      "Surprise me" spun                 -
+ *  - surprise_open      Surprise pick opened               wallpaper_*, category_*
+ *  - duo_banner_click   Duo banner tapped in Collections   -
+ *  - duo_view           Duo card shown                     duo_id, duo_name
+ *  - duo_set            Duo applied                        duo_id, duo_name, target (duo/home/lock), success
  *
  * Mark the parameters you want to report on as custom dimensions in the Firebase console
  * (Analytics -> Custom definitions), otherwise they only appear in DebugView / BigQuery.
@@ -58,9 +64,10 @@ class AnalyticsTracker @Inject constructor(
         "via_reward" to viaReward.asParam()
     )
 
-    fun setWallpaper(wallpaper: Wallpaper, target: WallpaperTarget, success: Boolean) = log(
+    fun setWallpaper(wallpaper: Wallpaper, target: WallpaperTarget, success: Boolean, adjusted: Boolean = false) = log(
         "set_wallpaper",
         *wallpaperParams(wallpaper),
+        "adjusted" to adjusted.asParam(),
         "target" to when (target) {
             WallpaperTarget.HOME -> "home"
             WallpaperTarget.LOCK -> "lock"
@@ -68,6 +75,33 @@ class AnalyticsTracker @Inject constructor(
         },
         "success" to success.asParam()
     )
+
+    /** "Surprise me" shuffle started (incl. Shuffle again). */
+    fun surpriseSpin() = log("surprise_spin")
+
+    /** The "Surprise me" pick was opened in the full preview. */
+    fun surpriseOpen(wallpaper: Wallpaper) = log("surprise_open", *wallpaperParams(wallpaper))
+
+    /** Duo banner tapped in the Collections tab. */
+    fun duoBannerClick() = log("duo_banner_click")
+
+    /** A Duo card shown on the Duo screen (once per Duo it settles on). */
+    fun duoView(duoId: String, title: String) = log("duo_view", "duo_id" to duoId, "duo_name" to title)
+
+    fun duoSet(duoId: String, title: String, target: WallpaperTarget, success: Boolean) = log(
+        "duo_set",
+        "duo_id" to duoId,
+        "duo_name" to title,
+        "target" to when (target) {
+            WallpaperTarget.BOTH -> "duo"
+            WallpaperTarget.HOME -> "home"
+            WallpaperTarget.LOCK -> "lock"
+        },
+        "success" to success.asParam()
+    )
+
+    /** Undo after setting - restored the previous Walzi wallpaper. */
+    fun undo(success: Boolean) = log("wallpaper_undo", "success" to success.asParam())
 
     private fun wallpaperParams(wallpaper: Wallpaper): Array<Pair<String, Any>> = arrayOf(
         "wallpaper_id" to wallpaper.id,

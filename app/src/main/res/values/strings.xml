@@ -2,4 +2,8 @@
     <string name="app_name">Walzi Wallpapers</string>
     <string name="default_notification_channel_id">walzi_default_channel</string>
     <string name="default_notification_channel_name">Walzi notifications</string>
+    <!-- Shuffle home-screen widget -->
+    <string name="widget_shuffle_label">Shuffle</string>
+    <string name="widget_shuffle_busy">Changing…</string>
+    <string name="widget_shuffle_description">Tap to set a new wallpaper</string>
 </resources>

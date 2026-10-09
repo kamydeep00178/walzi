@@ -5,14 +5,14 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.yunok.walzi.domain.repository.WallpaperListRepository
-import com.yunok.walzi.util.WallpaperSetter
+import com.yunok.walzi.util.WallpaperApplier
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
 
 /**
  * Runs roughly once every 24 hours (scheduled by AutoRotateScheduler). Advances the active
- * list's rotation pointer by one and sets that wallpaper via the same WallpaperSetter the
+ * list's rotation pointer by one and sets that wallpaper via the same WallpaperApplier the
  * manual "Set Wallpaper" action uses. Android does not guarantee exact daily timing under
  * Doze/battery optimization - this is expected and matches how every wallpaper-rotation app
  * behaves without requesting exact-alarm permissions.
@@ -22,7 +22,7 @@ class AutoRotateWorker @AssistedInject constructor(
     @Assisted context: Context,
     @Assisted params: WorkerParameters,
     private val wallpaperListRepository: WallpaperListRepository,
-    private val wallpaperSetter: WallpaperSetter
+    private val wallpaperApplier: WallpaperApplier
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
@@ -32,7 +32,8 @@ class AutoRotateWorker @AssistedInject constructor(
         val wallpaper = wallpaperListRepository.advanceAndGetNextRotationWallpaper()
             ?: return Result.success() // active list is empty - nothing to do, not a failure
 
-        val outcome = wallpaperSetter.setWallpaper(wallpaper.imageUrl, settings.target)
+        // Through the applier so daily changes also appear in History (and can be undone).
+        val outcome = wallpaperApplier.apply(wallpaper, settings.target)
         return when {
             outcome.isSuccess -> Result.success()
             // Retry transient failures (network), but give up eventually: an image that can

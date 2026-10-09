@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shuffle widget background: dark rounded pill, matching the app (BgApp / Accent1 edge). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <corners android:radius="24dp" />
+    <solid android:color="#E615151B" />
+    <stroke android:width="1dp" android:color="#557C5CFF" />
+</shape>

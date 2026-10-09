@@ -1,5 +1,14 @@
 package com.yunok.walzi.presentation.home
 
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -23,18 +32,17 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,11 +56,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -72,7 +80,10 @@ import com.yunok.walzi.ads.BannerAdComposable
 import com.yunok.walzi.ads.NATIVE_ADS_PER_FEED
 import com.yunok.walzi.ads.NativeAdCard
 import com.yunok.walzi.domain.model.Category
+import com.yunok.walzi.domain.model.DuoConfig
+import com.yunok.walzi.presentation.duo.DuoBanner
 import com.yunok.walzi.domain.model.Wallpaper
+import com.yunok.walzi.presentation.components.CardStyle
 import com.yunok.walzi.presentation.components.CategoryTile
 import com.yunok.walzi.presentation.components.ErrorState
 import com.yunok.walzi.presentation.components.ThumbImage
@@ -82,9 +93,7 @@ import com.yunok.walzi.presentation.theme.Accent3
 import com.yunok.walzi.presentation.theme.BgApp
 import com.yunok.walzi.presentation.theme.BorderColor
 import com.yunok.walzi.presentation.theme.Elevated2
-import com.yunok.walzi.presentation.theme.Surface
 import com.yunok.walzi.presentation.theme.TextPrimary
-import com.yunok.walzi.presentation.theme.TextSecondary
 import com.yunok.walzi.presentation.theme.TextTertiary
 import com.yunok.walzi.util.findActivity
 import kotlinx.coroutines.delay
@@ -108,9 +117,11 @@ private const val PREFETCH_DISTANCE = 6
  *  number, so it starts a fresh row). */
 private const val COLLECTIONS_AD_AFTER = 6
 
+/** Cards in the Popular tab's "Top 10" deck. */
+private const val DECK_COUNT = 10
+
 /** Decode targets matched to each slot's on-screen size, so memory stays proportional to what's visible. */
 private val FEATURED_IMAGE_SIZE = Size(1000, 840)
-private val COLLECTION_PREVIEW_SIZE = Size(300, 160)
 
 /** Maps the selected feed tab to the "source" query param WallpaperDetail uses to keep paging. */
 private fun FeedTab.toSourceParam() = when (this) {
@@ -129,6 +140,7 @@ fun HomeScreen(
     onOpenList: (String) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenNotifications: () -> Unit,
+    onOpenDuo: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
     adViewModel: AdViewModel = hiltViewModel()
 ) {
@@ -137,14 +149,32 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
     val activity = LocalContext.current.findActivity()
 
-    // Feeds get NATIVE_ADS_PER_FEED ads; the extra one is the Collections grid's tile.
-    LaunchedEffect(adViewModel) { adViewModel.requestNativeAds(NATIVE_ADS_PER_FEED + 1) }
+    // Feeds get NATIVE_ADS_PER_FEED ads, then one for the Collections grid's tile and one for the
+    // Surprise overlay (5 in total - AdMob's per-request maximum). Each ad fills one slot only.
+    LaunchedEffect(adViewModel) { adViewModel.requestNativeAds(NATIVE_ADS_PER_FEED + 2) }
     val nativeAds = adViewModel.nativeAds
 
     // Opening a category is a natural break: a frequency-capped interstitial may show first,
     // and navigation continues once it's closed (or immediately when skipped).
     val onCategoryClickWithAd: (String) -> Unit = remember(onCategoryClick, activity, adViewModel) {
         { id -> if (activity != null) adViewModel.showInterstitial(activity) { onCategoryClick(id) } else onCategoryClick(id) }
+    }
+
+    // "Surprise me": random pick from wallpapers already cached on the phone (instant, offline).
+    var showSurprise by remember { mutableStateOf(false) }
+    val recentPicks = remember { mutableStateListOf<String>() }
+    val surprisePool = remember(state.featuredWallpapers, state.recent.wallpapers, state.popular.wallpapers) {
+        (state.featuredWallpapers + state.recent.wallpapers + state.popular.wallpapers).distinctBy { it.id }
+    }
+    // The button shows only the dice while the user scrolls down, the full label when scrolling up.
+    var fabExpanded by remember { mutableStateOf(true) }
+    val fabScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y < -8f) fabExpanded = false else if (available.y > 8f) fabExpanded = true
+                return Offset.Zero
+            }
+        }
     }
 
     val goToTab: (FeedTab) -> Unit = remember(pagerState, scope) {
@@ -165,15 +195,23 @@ fun HomeScreen(
         // just the tab row, not this whole screen.
         FeedTabRow(selectedIndex = { pagerState.currentPage }, onSelect = goToTab)
 
+        // Content area: the pager plus the Surprise button, which sits inside it - so it is always
+        // above (never touching) the banner ad below.
+        Box(modifier = Modifier.weight(1f).fillMaxWidth().nestedScroll(fabScrollConnection)) {
         HorizontalPager(
             state = pagerState,
-            modifier = Modifier.weight(1f).fillMaxWidth()
+            modifier = Modifier.fillMaxSize()
         ) { page ->
             val tab = TAB_ORDER[page]
 
             if (tab == FeedTab.COLLECTIONS) {
                 CollectionsGrid(
                     categories = state.categories,
+                    duoConfig = state.duoConfig,
+                    onDuoClick = {
+                        viewModel.trackDuoBannerClick()
+                        onOpenDuo()
+                    },
                     nativeAd = nativeAds.getOrNull(NATIVE_ADS_PER_FEED),
                     onCategoryClick = { id ->
                         viewModel.trackCategoryClick(id)
@@ -204,10 +242,47 @@ fun HomeScreen(
             }
         }
 
+        if (surprisePool.size >= 3) {
+            SurpriseFab(
+                expanded = fabExpanded,
+                onClick = { showSurprise = true },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+            )
+        }
+        }
+
         // Policy: no ads on screens without content (empty, loading or error states).
         val settledTab = TAB_ORDER[pagerState.settledPage]
         val tabHasContent = if (settledTab == FeedTab.COLLECTIONS) state.categories.isNotEmpty() else state.tab(settledTab).wallpapers.isNotEmpty()
-        if (tabHasContent) BannerAdComposable()
+        // Policy: also removed while the Surprise overlay covers the screen - a hidden ad must not
+        // keep "showing" (and counting impressions) behind other content.
+        if (tabHasContent && !showSurprise) BannerAdComposable()
+    }
+
+    // Full-screen slot-machine picker, shown above everything (incl. system bars) as a dialog.
+    if (showSurprise) {
+        Dialog(
+            onDismissRequest = { showSurprise = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+        ) {
+            SurpriseOverlay(
+                pool = surprisePool,
+                recentPicks = recentPicks,
+                onPicked = { picked ->
+                    recentPicks.add(0, picked.id)
+                    while (recentPicks.size > 5) recentPicks.removeAt(recentPicks.lastIndex)
+                },
+                onSpin = viewModel::trackSurpriseSpin,
+                onOpen = { picked ->
+                    viewModel.trackSurpriseOpen(picked)
+                    showSurprise = false
+                    onWallpaperClick(picked.id, "recent")
+                },
+                onClose = { showSurprise = false },
+                // Its own ad (not one already showing in the feed behind the overlay).
+                nativeAd = nativeAds.getOrNull(NATIVE_ADS_PER_FEED + 1)
+            )
+        }
     }
 }
 
@@ -255,7 +330,7 @@ private fun FeedPage(
                                 onWallpaperClick = onWallpaperClick,
                                 onViewAll = onViewAllFeatured
                             )
-                            YourCollectionsSection(
+                            YourCollectionsShelf(
                                 playlists = playlists,
                                 onOpenList = onOpenList,
                                 modifier = Modifier.padding(top = 20.dp)
@@ -273,16 +348,50 @@ private fun FeedPage(
 
                 FeedTab.POPULAR -> {
                     {
-                        SectionHeader(
-                            modifier = Modifier.padding(bottom = 6.dp),
-                            title = {
-                                Row {
-                                    Text("POPULAR", color = Accent3, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                    Text(" WALLPAPERS", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Column {
+                            // "Top 10" playing-card deck: 10 random popular wallpapers, preferring
+                            // ones beyond the first 10 so the deck doesn't repeat the grid's start.
+                            // Picked once and kept while paging; re-picked only if a card is gone.
+                            var deckIds by rememberSaveable { mutableStateOf(listOf<String>()) }
+                            val byId = remember(tabState.wallpapers) { tabState.wallpapers.associateBy { it.id } }
+                            LaunchedEffect(byId) {
+                                val stale = deckIds.size < minOf(DECK_COUNT, byId.size) || deckIds.any { it !in byId }
+                                if (stale) {
+                                    val all = tabState.wallpapers
+                                    deckIds = (all.drop(DECK_COUNT).shuffled() + all.take(DECK_COUNT).shuffled())
+                                        .take(DECK_COUNT)
+                                        .map { it.id }
                                 }
-                            },
-                            subtitle = "Top wallpapers loved by everyone"
-                        )
+                            }
+                            val top10 = remember(deckIds, byId) { deckIds.mapNotNull { byId[it] } }
+                            if (top10.size >= 3) {
+                                SectionHeader(
+                                    modifier = Modifier.padding(bottom = 4.dp),
+                                    title = {
+                                        Row {
+                                            Text("TOP 10", color = Accent3, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                            Text(" THIS WEEK", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                        }
+                                    },
+                                    subtitle = "Swipe the cards - tap one to open it"
+                                )
+                                PopularCardDeck(
+                                    wallpapers = top10,
+                                    onWallpaperClick = onWallpaperClick,
+                                    modifier = Modifier.padding(bottom = 18.dp)
+                                )
+                            }
+                            SectionHeader(
+                                modifier = Modifier.padding(bottom = 6.dp),
+                                title = {
+                                    Row {
+                                        Text("POPULAR", color = Accent3, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                        Text(" WALLPAPERS", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    }
+                                },
+                                subtitle = "Top wallpapers loved by everyone"
+                            )
+                        }
                     }
                 }
 
@@ -307,7 +416,13 @@ private fun FeedPage(
                 nativeAds = if (tab == FeedTab.FAVORITES) emptyList() else nativeAds,
                 onLoadMore = onLoadMore,
                 onWallpaperClick = onWallpaperClick,
-                headerContent = header
+                headerContent = header,
+                // Animated cards with a per-tab badge (Popular matches the Top 10 deck).
+                cardStyle = when (tab) {
+                    FeedTab.POPULAR -> CardStyle.POPULAR
+                    FeedTab.FAVORITES -> CardStyle.FAVORITE
+                    else -> CardStyle.RECENT
+                }
             )
         }
     }
@@ -550,126 +665,6 @@ private fun FeaturedCarousel(
     }
 }
 
-/**
- * "Folder card" style: circular icon, title + count, chevron on the right, and a strip of up
- * to 3 small thumbnails below. Shows only the user's real custom/default lists - no synthetic
- * Favourites entry here, since Favourites already has its own tab with its own proper header.
- */
-@Composable
-private fun YourCollectionsSection(
-    playlists: List<PlaylistPreview>,
-    onOpenList: (String) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    if (playlists.isEmpty()) return
-
-    Column(modifier = modifier) {
-        Text(
-            "YOUR COLLECTIONS",
-            color = TextTertiary,
-            fontWeight = FontWeight.Bold,
-            fontSize = 11.sp,
-            modifier = Modifier.padding(bottom = 10.dp)
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            CollectionCard(
-                icon = Icons.Filled.Image,
-                iconTint = Accent3,
-                title = playlists[0].list.name,
-                count = playlists[0].list.wallpaperIds.size,
-                previewImageUrls = playlists[0].previewImageUrls,
-                onClick = { onOpenList(playlists[0].list.id) },
-                modifier = Modifier.weight(1f)
-            )
-            if (playlists.size > 1) {
-                CollectionCard(
-                    icon = Icons.Filled.Image,
-                    iconTint = Accent3,
-                    title = playlists[1].list.name,
-                    count = playlists[1].list.wallpaperIds.size,
-                    previewImageUrls = playlists[1].previewImageUrls,
-                    onClick = { onOpenList(playlists[1].list.id) },
-                    modifier = Modifier.weight(1f)
-                )
-            } else {
-                Box(Modifier.weight(1f))
-            }
-        }
-        // Any further custom lists beyond the first two show as additional full-width rows,
-        // keeping the layout predictable regardless of how many lists exist.
-        playlists.drop(2).forEach { preview ->
-            CollectionCard(
-                icon = Icons.Filled.Image,
-                iconTint = Accent3,
-                title = preview.list.name,
-                count = preview.list.wallpaperIds.size,
-                previewImageUrls = preview.previewImageUrls,
-                onClick = { onOpenList(preview.list.id) },
-                modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun CollectionCard(
-    icon: ImageVector,
-    iconTint: Color,
-    title: String,
-    count: Int,
-    previewImageUrls: List<String>,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(Surface)
-            .clickable(onClick = onClick)
-            .padding(14.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(CircleShape)
-                    .background(iconTint.copy(alpha = 0.18f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(17.dp))
-            }
-            Column(modifier = Modifier.weight(1f).padding(start = 10.dp)) {
-                Text(title, color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.5.sp, maxLines = 1)
-                Text(
-                    "$count wallpaper${if (count == 1) "" else "s"}",
-                    color = TextTertiary,
-                    fontSize = 11.sp
-                )
-            }
-            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(18.dp))
-        }
-
-        if (previewImageUrls.isNotEmpty()) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(top = 10.dp)
-            ) {
-                previewImageUrls.take(3).forEach { url ->
-                    ThumbImage(
-                        url = url,
-                        placeholderKey = url,
-                        size = COLLECTION_PREVIEW_SIZE,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(46.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                    )
-                }
-            }
-        }
-    }
-}
-
 @Composable
 private fun WallpaperMasonry(
     wallpapers: List<Wallpaper>,
@@ -677,9 +672,12 @@ private fun WallpaperMasonry(
     nativeAds: List<NativeAd>,
     onLoadMore: () -> Unit,
     onWallpaperClick: (String) -> Unit,
-    headerContent: (@Composable () -> Unit)? = null
+    headerContent: (@Composable () -> Unit)? = null,
+    cardStyle: CardStyle? = null
 ) {
     val gridState = rememberLazyStaggeredGridState()
+    // Cards already animated in this grid, so each animates only once.
+    val dealtIds = remember { mutableSetOf<String>() }
     val currentOnLoadMore by rememberUpdatedState(onLoadMore)
 
     // Emits true whenever the user is within PREFETCH_DISTANCE items of the end. The effect is
@@ -709,7 +707,13 @@ private fun WallpaperMasonry(
             item(key = "header", span = StaggeredGridItemSpan.FullLine, contentType = "header") { content() }
         }
 
-        wallpaperCardsWithAds(wallpapers = wallpapers, nativeAds = nativeAds, onWallpaperClick = onWallpaperClick)
+        wallpaperCardsWithAds(
+            wallpapers = wallpapers,
+            nativeAds = nativeAds,
+            onWallpaperClick = onWallpaperClick,
+            style = cardStyle,
+            dealtIds = dealtIds
+        )
 
         if (isLoadingMore) {
             item(key = "loading_more", span = StaggeredGridItemSpan.FullLine, contentType = "loading") {
@@ -724,9 +728,13 @@ private fun WallpaperMasonry(
 @Composable
 private fun CollectionsGrid(
     categories: List<Category>,
+    duoConfig: DuoConfig?,
+    onDuoClick: () -> Unit,
     nativeAd: NativeAd?,
     onCategoryClick: (String) -> Unit
 ) {
+    // Tiles already popped in, so each animates only once.
+    val shownTiles = remember { mutableSetOf<String>() }
     // One full-row native ad among the category tiles, only where tiles continue after it.
     val adAfter = if (nativeAd != null && categories.size > COLLECTIONS_AD_AFTER) COLLECTIONS_AD_AFTER else categories.size
 
@@ -744,15 +752,23 @@ private fun CollectionsGrid(
                 subtitle = "Beautiful themes for every mood and moment.",
             )
         }
-        items(categories.subList(0, adAfter), key = { it.id }) { category ->
-            CategoryTile(category = category, onClick = { onCategoryClick(category.id) })
+        // Full-width Duo banner (rotating covers) - opens the Duo screen.
+        if (duoConfig?.isVisible == true) {
+            item(key = "duo_banner", span = { GridItemSpan(maxLineSpan) }, contentType = "duo_banner") {
+                DuoBanner(config = duoConfig, onClick = onDuoClick)
+            }
+        }
+        itemsIndexed(categories.subList(0, adAfter), key = { _, c -> c.id }) { index, category ->
+            val animateIn = remember(category.id) { shownTiles.add(category.id) }
+            CategoryTile(category = category, onClick = { onCategoryClick(category.id) }, index = index, animateIn = animateIn)
         }
         if (adAfter < categories.size) {
             item(key = "native_ad", span = { GridItemSpan(maxLineSpan) }, contentType = "native_ad") {
                 NativeAdCard(nativeAd = nativeAd)
             }
-            items(categories.subList(adAfter, categories.size), key = { it.id }) { category ->
-                CategoryTile(category = category, onClick = { onCategoryClick(category.id) })
+            itemsIndexed(categories.subList(adAfter, categories.size), key = { _, c -> c.id }) { index, category ->
+                val animateIn = remember(category.id) { shownTiles.add(category.id) }
+                CategoryTile(category = category, onClick = { onCategoryClick(category.id) }, index = index, animateIn = animateIn)
             }
         }
     }

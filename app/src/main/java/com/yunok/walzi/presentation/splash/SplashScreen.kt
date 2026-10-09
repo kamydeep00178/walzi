@@ -36,7 +36,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.size.Size
 import com.yunok.walzi.R
+import com.yunok.walzi.presentation.components.ThumbImage
 import com.yunok.walzi.presentation.theme.BgApp
 import com.yunok.walzi.presentation.theme.GradientSignature
 import kotlinx.coroutines.delay
@@ -58,6 +60,9 @@ private val tileGlowColors = listOf(
 
 private const val SPLASH_DURATION_MS = 1800L
 
+/** Splash tiles are small - decode the cached thumbnails tiny so the splash stays light. */
+private val SPLASH_TILE_SIZE = Size(300, 480)
+
 /** Background drift speed: same pace as the old 0.6px per 16ms step. */
 private const val SPLASH_SCROLL_PX_PER_MS = 0.6f / 16f
 
@@ -68,7 +73,7 @@ private const val SPLASH_SCROLL_PX_PER_MS = 0.6f / 16f
  * to swap into AppRoot once it fires. See MainActivity.kt for the swap logic.
  */
 @Composable
-fun SplashScreen(onFinished: () -> Unit) {
+fun SplashScreen(images: List<String> = emptyList(), onFinished: () -> Unit) {
     val gridState = rememberLazyGridState()
     val repeatedTiles = remember { List(200) { tileGlowColors[it % tileGlowColors.size] } }
 
@@ -111,7 +116,12 @@ fun SplashScreen(onFinished: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(repeatedTiles.size) { index ->
-                    GlassGlowTile(colors = repeatedTiles[index])
+                    // Real top wallpapers when they're cached on the phone; glass tiles otherwise.
+                    if (images.isNotEmpty()) {
+                        WallpaperTile(url = images[index % images.size], colors = repeatedTiles[index])
+                    } else {
+                        GlassGlowTile(colors = repeatedTiles[index])
+                    }
                 }
             }
         }
@@ -165,6 +175,32 @@ fun SplashScreen(onFinished: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+/**
+ * A cached wallpaper (from disk, decoded small) in the same glass-panel frame as [GlassGlowTile]:
+ * rounded, with the neon gradient edge - so both splash styles look like one family.
+ */
+@Composable
+private fun WallpaperTile(url: String, colors: Pair<Color, Color>, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .aspectRatio(0.62f)
+            .clip(RoundedCornerShape(22.dp))
+            .background(Color(0xFF0B0B10))
+            .border(
+                width = 1.3.dp,
+                brush = Brush.linearGradient(listOf(colors.first, colors.second, Color.Transparent)),
+                shape = RoundedCornerShape(22.dp),
+            ),
+    ) {
+        ThumbImage(
+            url = url,
+            placeholderKey = url,
+            size = SPLASH_TILE_SIZE,
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 

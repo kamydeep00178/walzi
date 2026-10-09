@@ -53,6 +53,19 @@
             </intent-filter>
         </activity>
 
+        <!-- Home-screen "Shuffle" widget: one tap sets the next wallpaper. -->
+        <receiver
+            android:name=".widget.ShuffleWidgetProvider"
+            android:exported="false"
+            android:label="@string/widget_shuffle_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_shuffle_info" />
+        </receiver>
+
         <service
             android:name=".service.WalziFirebaseMessagingService"
             android:exported="false">

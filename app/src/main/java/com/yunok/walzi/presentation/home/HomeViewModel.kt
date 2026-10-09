@@ -8,6 +8,8 @@ import com.yunok.walzi.domain.repository.WallpaperListRepository
 import com.yunok.walzi.domain.repository.WallpaperRepository
 import com.yunok.walzi.presentation.common.BaseViewModel
 import com.yunok.walzi.presentation.common.runSuspendCatching
+import com.yunok.walzi.data.repository.DuoRepository
+import com.yunok.walzi.domain.model.Wallpaper
 import com.yunok.walzi.util.AnalyticsTracker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -38,7 +40,8 @@ import javax.inject.Inject
 class HomeViewModel @Inject constructor(
     private val repository: WallpaperRepository,
     private val listRepository: WallpaperListRepository,
-    private val analytics: AnalyticsTracker
+    private val analytics: AnalyticsTracker,
+    private val duoRepository: DuoRepository
 ) : BaseViewModel<HomeIntent, HomeState, HomeEffect>(HomeState()) {
 
     private val cursors = mutableMapOf<FeedTab, WallpaperCursor>()
@@ -78,6 +81,11 @@ class HomeViewModel @Inject constructor(
                 setState { copy(playlists = previews) }
             }
         }
+        // Duo banner for the Collections tab (one small document, cached for the session).
+        launchSafely {
+            val config = duoRepository.getConfig()
+            setState { copy(duoConfig = config) }
+        }
         startTab(FeedTab.RECENT)
     }
 
@@ -89,6 +97,13 @@ class HomeViewModel @Inject constructor(
             is HomeIntent.ToggleFavorite -> repository.toggleFavorite(intent.wallpaperId)
         }
     }
+
+    /** Analytics: "Surprise me" spun / its pick opened. */
+    fun trackSurpriseSpin() = analytics.surpriseSpin()
+    fun trackSurpriseOpen(wallpaper: Wallpaper) = analytics.surpriseOpen(wallpaper)
+
+    /** Analytics: the Duo banner was tapped. */
+    fun trackDuoBannerClick() = analytics.duoBannerClick()
 
     /** Analytics: a category tile was tapped in the Collections tab. */
     fun trackCategoryClick(categoryId: String) {

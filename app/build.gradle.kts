@@ -40,8 +40,8 @@ android {
         applicationId = "com.yunok.walzi"
         minSdk = 24
         targetSdk = 36
-        versionCode = 10
-        versionName = "1.0.3"
+        versionCode = 12
+        versionName = "1.0.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

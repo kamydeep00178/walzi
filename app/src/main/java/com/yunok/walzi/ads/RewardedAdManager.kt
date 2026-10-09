@@ -2,6 +2,7 @@ package com.yunok.walzi.ads
 
 import android.app.Activity
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import com.google.android.gms.ads.AdError
 import com.google.android.gms.ads.AdRequest
@@ -9,6 +10,7 @@ import com.google.android.gms.ads.FullScreenContentCallback
 import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.rewarded.RewardedAd
 import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -20,21 +22,23 @@ private const val TAG = "RewardedAdManager"
  *    says exactly what they get. Never shown automatically.
  *  - The reward is granted only from the SDK's onUserEarnedReward callback.
  *  - It counts toward the interstitial time cap, so an interstitial never follows right after.
+ *  - A loaded ad older than [AD_MAX_AGE_MS] is dropped and reloaded (AdMob ads expire after ~1 h).
  */
 @Singleton
 class RewardedAdManager @Inject constructor(
     private val interstitialAdManager: InterstitialAdManager
 ) {
     private var rewardedAd: RewardedAd? = null
+    private var loadedAtElapsed = 0L
     private var isLoading = false
 
     /** True when an ad is loaded and [show] would actually play one. */
-    val isReady: Boolean get() = AdsConfig.ADS_ENABLED && rewardedAd != null
+    val isReady: Boolean get() = AdsConfig.ADS_ENABLED && freshAd() != null
 
     fun load(context: Context) {
         if (!AdsConfig.ADS_ENABLED) return
         if (!AdManager.isInitialized.value) return
-        if (isLoading || rewardedAd != null) return
+        if (isLoading || freshAd() != null) return
         isLoading = true
 
         RewardedAd.load(
@@ -44,6 +48,7 @@ class RewardedAdManager @Inject constructor(
             object : RewardedAdLoadCallback() {
                 override fun onAdLoaded(ad: RewardedAd) {
                     rewardedAd = ad
+                    loadedAtElapsed = SystemClock.elapsedRealtime()
                     isLoading = false
                 }
 
@@ -61,7 +66,7 @@ class RewardedAdManager @Inject constructor(
      * to earn the reward, false if they closed it early or no ad could be shown.
      */
     fun show(activity: Activity, onResult: (earned: Boolean) -> Unit) {
-        val ad = rewardedAd
+        val ad = freshAd()
         if (!AdsConfig.ADS_ENABLED || ad == null || activity.isFinishing || activity.isDestroyed) {
             load(activity)
             onResult(false)
@@ -90,5 +95,21 @@ class RewardedAdManager @Inject constructor(
         }
         rewardedAd = null // a RewardedAd can only be shown once
         ad.show(activity) { earned = true }
+    }
+
+    /** The loaded ad, or null - an expired one is dropped so it gets reloaded. */
+    private fun freshAd(): RewardedAd? {
+        val ad = rewardedAd ?: return null
+        if (SystemClock.elapsedRealtime() - loadedAtElapsed > AD_MAX_AGE_MS) {
+            Log.d(TAG, "Dropping expired rewarded ad")
+            rewardedAd = null
+            return null
+        }
+        return ad
+    }
+
+    private companion object {
+        /** AdMob full-screen ads expire after ~1 hour; drop ours a little before that. */
+        val AD_MAX_AGE_MS = TimeUnit.MINUTES.toMillis(55)
     }
 }

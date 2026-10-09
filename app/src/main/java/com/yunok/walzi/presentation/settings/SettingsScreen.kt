@@ -3,7 +3,6 @@ package com.yunok.walzi.presentation.settings
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,20 +17,16 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,19 +40,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.yunok.walzi.ads.AdFreeManager
-import com.yunok.walzi.ads.AdViewModel
-import com.yunok.walzi.ads.AdsConfig
 import com.yunok.walzi.ads.ConsentManager
 import com.yunok.walzi.presentation.theme.Accent1
 import com.yunok.walzi.presentation.theme.BgApp
-import com.yunok.walzi.presentation.theme.Elevated
 import com.yunok.walzi.presentation.theme.Elevated2
 import com.yunok.walzi.presentation.theme.Surface
 import com.yunok.walzi.presentation.theme.TextPrimary
-import com.yunok.walzi.presentation.theme.TextSecondary
 import com.yunok.walzi.presentation.theme.TextTertiary
 import com.yunok.walzi.util.findActivity
 
@@ -69,7 +57,7 @@ private const val PRIVACY_POLICY_URL = "https://yunoktech-pixel.github.io/walzi-
 private const val TERMS_URL = "https://yunoktech-pixel.github.io/walzi-legal/terms-and-conditions.html"
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit, adViewModel: AdViewModel = hiltViewModel()) {
+fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var autoRotate by remember { mutableStateOf(true) }
     var dailySuggest by remember { mutableStateOf(true) }
@@ -78,8 +66,6 @@ fun SettingsScreen(onBack: () -> Unit, adViewModel: AdViewModel = hiltViewModel(
     val ctx    = LocalContext.current
 
     val activity = ctx.findActivity()
-    val adFree by AdFreeManager.isAdFree.collectAsStateWithLifecycle()
-    var showRemoveAdsDialog by remember { mutableStateOf(false) }
 
     var showPrivacyRow by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
@@ -106,26 +92,6 @@ fun SettingsScreen(onBack: () -> Unit, adViewModel: AdViewModel = hiltViewModel(
             SettingsToggleRow("Wi-Fi only downloads", "Avoid using mobile data", wifiOnly) { wifiOnly = it }
             SettingsToggleRow("High-quality downloads", "Larger file size, sharper detail", hqDownload) { hqDownload = it }
         }*/
-
-        if (AdsConfig.ADS_ENABLED) {
-            SettingsSection(title = "Ads") {
-                if (adFree) {
-                    val hoursLeft = ((AdFreeManager.remainingMs() + HOUR_MS - 1) / HOUR_MS).coerceAtLeast(1)
-                    SettingsInfoRow(
-                        icon = Icons.Filled.Block,
-                        title = "Ads removed",
-                        subtitle = "About $hoursLeft h left"
-                    )
-                } else {
-                    SettingsLinkRow(
-                        icon = Icons.Filled.PlayCircle,
-                        title = "Remove ads for 24 hours",
-                        onClick = { showRemoveAdsDialog = true },
-                        showDivider = false
-                    )
-                }
-            }
-        }
 
         SettingsSection(title = "About") {
             if (showPrivacyRow) {
@@ -161,62 +127,6 @@ fun SettingsScreen(onBack: () -> Unit, adViewModel: AdViewModel = hiltViewModel(
         }
     }
 
-    // Opt-in rewarded ad: the dialog says exactly what the user gets before anything plays.
-    if (showRemoveAdsDialog) {
-        AlertDialog(
-            onDismissRequest = { showRemoveAdsDialog = false },
-            containerColor = Elevated,
-            title = { Text("Remove ads for 24 hours", color = TextPrimary, fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    "Watch one short video ad to hide all other ads in Walzi for the next 24 hours.",
-                    color = TextSecondary
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showRemoveAdsDialog = false
-                    val host = activity
-                    if (host == null || !adViewModel.isRewardedReady) {
-                        Toast.makeText(context, "No video available right now. Please try again in a minute.", Toast.LENGTH_SHORT).show()
-                    } else {
-                        adViewModel.showRewarded(host) { earned ->
-                            if (earned) {
-                                AdFreeManager.grant()
-                                Toast.makeText(context, "Ads removed for 24 hours.", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(context, "Watch the full video to remove ads.", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                }) { Text("Watch video", color = Accent1, fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRemoveAdsDialog = false }) { Text("Cancel", color = TextSecondary) }
-            }
-        )
-    }
-}
-
-private const val HOUR_MS = 60L * 60L * 1000L
-
-/** A non-clickable row: icon, title and a status line (e.g. "Ads removed - about 5 h left"). */
-@Composable
-private fun SettingsInfoRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, contentDescription = null, tint = Accent1, modifier = Modifier.padding(end = 12.dp))
-        Column {
-            Text(title, color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-            Text(subtitle, color = TextTertiary, fontSize = 11.5.sp)
-        }
-    }
 }
 
 private fun openUrl(context: android.content.Context, url: String) {

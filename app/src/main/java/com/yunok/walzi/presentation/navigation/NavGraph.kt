@@ -21,6 +21,8 @@ import com.yunok.walzi.presentation.lists.ListDetailScreen
 import com.yunok.walzi.presentation.lists.ListsScreen
 import com.yunok.walzi.presentation.notifications.NotificationsScreen
 import com.yunok.walzi.presentation.search.SearchScreen
+import com.yunok.walzi.presentation.duo.DuoScreen
+import com.yunok.walzi.presentation.history.HistoryScreen
 import com.yunok.walzi.presentation.settings.SettingsScreen
 import com.yunok.walzi.presentation.wallpaperdetail.WallpaperDetailScreen
 
@@ -70,7 +72,8 @@ fun NavGraph(
                 onCategoryClick = { id -> navController.navigate(Screen.CategoryDetail.createRoute(id)) },
                 onOpenList = { listId -> navController.navigate(Screen.ListDetail.createRoute(listId)) },
                 onOpenSearch = { navController.navigate(Screen.Search.route) },
-                onOpenNotifications = { navController.navigate(Screen.Notifications.route) }
+                onOpenNotifications = { navController.navigate(Screen.Notifications.route) },
+                onOpenDuo = { navController.navigate(Screen.Duo.route) }
             )
         }
 
@@ -104,6 +107,14 @@ fun NavGraph(
 
         composable(Screen.Settings.route) {
             SettingsScreen(onBack = { navController.popBackStackOrHome() })
+        }
+
+        composable(Screen.History.route) {
+            HistoryScreen(onBack = { navController.popBackStackOrHome() })
+        }
+
+        composable(Screen.Duo.route) {
+            DuoScreen(onBack = { navController.popBackStackOrHome() })
         }
 
         composable(Screen.Lists.route) {

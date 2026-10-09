@@ -1,5 +1,31 @@
 package com.yunok.walzi.presentation.wallpaperdetail
 
+import kotlin.math.absoluteValue
+import androidx.compose.ui.util.lerp
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.AnimatedContent
+import com.yunok.walzi.util.WallpaperAdjustments
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.BiasAlignment
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SnackbarDuration
+import androidx.activity.compose.BackHandler
 import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -43,6 +69,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -117,7 +144,15 @@ fun WallpaperDetailScreen(
     LaunchedEffect(Unit) {
         viewModel.effect.collect { effect ->
             when (effect) {
-                is WallpaperDetailEffect.ShowMessage -> scope.launch { snackbarHostState.showSnackbar(effect.text) }
+                is WallpaperDetailEffect.ShowMessage -> scope.launch {
+                    val result = snackbarHostState.showSnackbar(
+                        message = effect.text,
+                        actionLabel = if (effect.undoable) "Undo" else null,
+                        // Long when undoable: an interstitial may cover the first seconds.
+                        duration = if (effect.undoable) SnackbarDuration.Long else SnackbarDuration.Short
+                    )
+                    if (result == SnackbarResult.ActionPerformed) viewModel.sendIntent(WallpaperDetailIntent.Undo)
+                }
                 // Frequency-capped inside InterstitialAdManager; a no-op when ads are disabled.
                 WallpaperDetailEffect.ActionCompleted -> activity?.let { adViewModel.showInterstitial(it) }
             }
@@ -147,6 +182,13 @@ fun WallpaperDetailScreen(
             LaunchedEffect(settledWallpaperId) {
                 settledWallpaperId?.let(viewModel::onWallpaperViewed)
             }
+
+            // Adjust (dim / blur / brightness / position) belongs to the wallpaper on screen and
+            // resets when the user swipes to another one. Preview mockup / Adjust sheet state.
+            var adjustments by remember(settledWallpaperId) { mutableStateOf(WallpaperAdjustments.NONE) }
+            var mockupMode by remember { mutableStateOf<MockupMode?>(null) }
+            var showAdjustSheet by remember { mutableStateOf(false) }
+            BackHandler(enabled = mockupMode != null) { mockupMode = null }
 
             // Prefetch the next page a few swipes before the user actually hits the end.
             LaunchedEffect(pagerState.currentPage, state.wallpapers.size) {
@@ -220,27 +262,78 @@ fun WallpaperDetailScreen(
                 )
             }
 
+            // Opening animation: the image eases in (slight zoom-out + fade) and the bars slide in.
+            val entry = remember { Animatable(0f) }
+            LaunchedEffect(Unit) { entry.animateTo(1f, tween(520, easing = FastOutSlowInEasing)) }
+
             // Only the image itself lives inside the pager, so only the image moves during a
             // vertical swipe. Buttons/text below are a separate fixed overlay in the same Box.
             VerticalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        val e = entry.value
+                        alpha = e
+                        scaleX = 1.06f - 0.06f * e
+                        scaleY = 1.06f - 0.06f * e
+                    },
                 // Compose the next/previous wallpaper before the swipe reaches it, so it isn't
                 // blank when it slides in. Cheap: neighbours only ever load their thumbnail -
                 // the original waits until the user actually settles on that page.
                 beyondViewportPageCount = 1
             ) { page ->
                 val isSettledHere by remember(page) { derivedStateOf { pagerState.settledPage == page } }
-                PreviewPage(wallpaper = state.wallpapers[page], isSettledHere = isSettledHere)
+                // Swipe "depth" effect: a page moving away shrinks, rounds its corners and dims,
+                // like flipping through a stack of cards. Follows the finger exactly; read in
+                // the draw phase only, so swiping never recomposes the page.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            val offset = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
+                            val f = offset.absoluteValue.coerceIn(0f, 1f)
+                            val s = lerp(1f, 0.86f, f)
+                            scaleX = s
+                            scaleY = s
+                            alpha = lerp(1f, 0.45f, f)
+                            shape = RoundedCornerShape((28f * f).dp)
+                            clip = f > 0f
+                        }
+                ) {
+                    PreviewPage(
+                        wallpaper = state.wallpapers[page],
+                        isSettledHere = isSettledHere,
+                        // Live preview of the adjustments on the wallpaper being edited only.
+                        adjustments = if (isSettledHere) adjustments else WallpaperAdjustments.NONE
+                    )
+                }
+            }
+
+            // "Preview on my phone": the mockup replaces all controls until closed.
+            mockupMode?.let { mode ->
+                PhoneMockupOverlay(
+                    mode = mode,
+                    onModeChange = { mockupMode = it },
+                    onClose = { mockupMode = null }
+                )
             }
 
             // Fixed overlay: position stays put regardless of swipe progress. Only the data it
             // shows (title, favorite state, action targets) updates once a swipe settles on a
             // new page, via currentWallpaper.
-            if (currentWallpaper != null) {
+            if (currentWallpaper != null && mockupMode == null) {
                 WallpaperOverlayTopBar(
                     onBack = onBack,
-                    modifier = Modifier.align(Alignment.TopCenter)
+                    onPreview = { mockupMode = MockupMode.HOME },
+                    onAdjust = { showAdjustSheet = true },
+                    isAdjusted = !adjustments.isDefault,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .graphicsLayer {
+                            alpha = entry.value
+                            translationY = (1f - entry.value) * -40.dp.toPx()
+                        }
                 )
 
                 // Drawn after the top bar so it sits above its gradient, at the very top edge.
@@ -258,7 +351,12 @@ fun WallpaperDetailScreen(
                     onOpenAddToList = { viewModel.sendIntent(WallpaperDetailIntent.OpenAddToListSheet(currentWallpaper.id)) },
                     onDownload = { requestDownload(currentWallpaper.id) },
                     onOpenSetSheet = { viewModel.sendIntent(WallpaperDetailIntent.OpenSetWallpaperSheet(currentWallpaper.id)) },
-                    modifier = Modifier.align(Alignment.BottomCenter)
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .graphicsLayer {
+                            alpha = entry.value
+                            translationY = (1f - entry.value) * 60.dp.toPx()
+                        }
                 )
             }
 
@@ -280,13 +378,34 @@ fun WallpaperDetailScreen(
                 val target = state.wallpapers.firstOrNull { it.id == state.targetWallpaperId }
                 ModalBottomSheet(
                     onDismissRequest = { viewModel.sendIntent(WallpaperDetailIntent.DismissSetWallpaperSheet) },
+                    // Open fully, so every option and the adjust note are visible.
+                    sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
                     containerColor = Elevated
                 ) {
                     SetWallpaperSheetContent(
                         wallpaperTitle = target?.title.orEmpty(),
+                        isAdjusted = !adjustments.isDefault,
                         onSelect = { t ->
-                            target?.let { viewModel.sendIntent(WallpaperDetailIntent.ConfirmSetWallpaper(it.id, t)) }
+                            target?.let {
+                                viewModel.sendIntent(WallpaperDetailIntent.ConfirmSetWallpaper(it.id, t, adjustments))
+                            }
                         }
+                    )
+                }
+            }
+
+            if (showAdjustSheet) {
+                // Transparent scrim so the live preview behind the sheet stays fully visible.
+                ModalBottomSheet(
+                    onDismissRequest = { showAdjustSheet = false },
+                    sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                    containerColor = Elevated.copy(alpha = 0.96f),
+                    scrimColor = Color.Transparent
+                ) {
+                    AdjustSheetContent(
+                        adjustments = adjustments,
+                        onChange = { adjustments = it },
+                        onDone = { showAdjustSheet = false }
                     )
                 }
             }
@@ -334,8 +453,22 @@ private const val ORIGINAL_LOAD_DELAY_MS = 500L
  * (see WallpaperSetter / ImageDownloader).
  */
 @Composable
-private fun PreviewPage(wallpaper: Wallpaper, isSettledHere: Boolean) {
+private fun PreviewPage(
+    wallpaper: Wallpaper,
+    isSettledHere: Boolean,
+    adjustments: WallpaperAdjustments = WallpaperAdjustments.NONE
+) {
     val context = LocalContext.current
+    // Live preview of Adjust: same crop alignment, colour scale and (API 31+) blur that
+    // WallpaperSetter applies to the real bitmap.
+    val alignment = BiasAlignment(adjustments.position, 0f)
+    val scale = adjustments.colorScale
+    val colorFilter = remember(scale) {
+        if (scale == 1f) null else ColorFilter.colorMatrix(ColorMatrix().apply { setToScale(scale, scale, scale, 1f) })
+    }
+    val imageModifier = Modifier
+        .fillMaxSize()
+        .then(if (adjustments.blur > 0f) Modifier.blur((adjustments.blur * WallpaperAdjustments.MAX_BLUR_DP).dp) else Modifier)
     // Once loaded, the original stays while this page is composed, so swiping back is instant.
     var loadOriginal by remember(wallpaper.id) { mutableStateOf(false) }
 
@@ -358,7 +491,9 @@ private fun PreviewPage(wallpaper: Wallpaper, isSettledHere: Boolean) {
             },
             contentDescription = wallpaper.title,
             contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
+            alignment = alignment,
+            colorFilter = colorFilter,
+            modifier = imageModifier
         )
         if (loadOriginal) {
             AsyncImage(
@@ -367,7 +502,9 @@ private fun PreviewPage(wallpaper: Wallpaper, isSettledHere: Boolean) {
                 },
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
+                alignment = alignment,
+                colorFilter = colorFilter,
+                modifier = imageModifier
             )
         }
     }
@@ -407,15 +544,33 @@ private fun OriginalLoadProgressBar(imageUrl: String, modifier: Modifier = Modif
 @Composable
 private fun WallpaperOverlayTopBar(
     onBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onPreview: (() -> Unit)? = null,
+    onAdjust: (() -> Unit)? = null,
+    isAdjusted: Boolean = false
 ) {
-    Box(
+    Row(
         modifier = modifier
             .fillMaxWidth()
             .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)))
-            .padding(top = 20.dp, bottom = 40.dp, start = 12.dp, end = 12.dp)
+            .padding(top = 20.dp, bottom = 40.dp, start = 12.dp, end = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         CircleIconButton(icon = Icons.Filled.ArrowBack, contentDescription = "Back", onClick = onBack)
+        Spacer(Modifier.weight(1f))
+        if (onPreview != null) {
+            CircleIconButton(icon = Icons.Filled.Visibility, contentDescription = "Preview on my phone", onClick = onPreview)
+        }
+        if (onAdjust != null) {
+            Spacer(Modifier.width(10.dp))
+            CircleIconButton(
+                icon = Icons.Filled.Tune,
+                contentDescription = "Adjust",
+                // Accent tint = adjustments are active and will be applied.
+                tint = if (isAdjusted) Accent1 else Color.White,
+                onClick = onAdjust
+            )
+        }
     }
 }
 
@@ -437,13 +592,35 @@ private fun WallpaperOverlayBottomBar(
             .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f))))
             .padding(top = 50.dp, bottom = 22.dp, start = 20.dp, end = 20.dp)
     ) {
-        Text(
-            wallpaper.title,
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            fontSize = 21.sp,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
+        // The title slides up and fades into the next one when the wallpaper changes.
+        AnimatedContent(
+            targetState = wallpaper.title,
+            transitionSpec = {
+                (slideInVertically(tween(320)) { it / 2 } + fadeIn(tween(320))) togetherWith
+                    (slideOutVertically(tween(220)) { -it / 2 } + fadeOut(tween(220)))
+            },
+            label = "title"
+        ) { title ->
+            Text(
+                title,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 21.sp,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+        }
+
+        // Heart "pop" when favourite is toggled (not when swiping to another wallpaper).
+        val heartScale = remember { Animatable(1f) }
+        var lastFavorite by remember(wallpaper.id) { mutableStateOf(isFavorite) }
+        LaunchedEffect(wallpaper.id, isFavorite) {
+            if (isFavorite != lastFavorite) {
+                lastFavorite = isFavorite
+                heartScale.snapTo(0.6f)
+                heartScale.animateTo(1f, spring(Spring.DampingRatioHighBouncy, Spring.StiffnessMedium))
+            }
+        }
+
         // All four actions in one horizontal row: Favorite, Add to List, Download (fixed-size
         // icon buttons), then Set Wallpaper taking the remaining width.
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -458,7 +635,11 @@ private fun WallpaperOverlayBottomBar(
                 Icon(
                     imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                     contentDescription = "Favorite",
-                    tint = if (isFavorite) Accent2 else Color.White
+                    tint = if (isFavorite) Accent2 else Color.White,
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = heartScale.value
+                        scaleY = heartScale.value
+                    }
                 )
             }
             Box(
@@ -525,7 +706,11 @@ private fun CircleIconButton(
 }
 
 @Composable
-private fun SetWallpaperSheetContent(wallpaperTitle: String, onSelect: (WallpaperTarget) -> Unit) {
+private fun SetWallpaperSheetContent(
+    wallpaperTitle: String,
+    isAdjusted: Boolean,
+    onSelect: (WallpaperTarget) -> Unit
+) {
     Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp).padding(bottom = 26.dp)) {
         Text(
             "Set \"$wallpaperTitle\" as wallpaper for…",
@@ -537,6 +722,9 @@ private fun SetWallpaperSheetContent(wallpaperTitle: String, onSelect: (Wallpape
         SheetOption(Icons.Filled.PhoneAndroid, "Home Screen", "Shown behind your app icons") { onSelect(WallpaperTarget.HOME) }
         SheetOption(Icons.Filled.LockClock, "Lock Screen", "Shown when your phone is locked") { onSelect(WallpaperTarget.LOCK) }
         SheetOption(Icons.Filled.Check, "Home & Lock Screen", "Set on both screens at once") { onSelect(WallpaperTarget.BOTH) }
+        if (isAdjusted) {
+            Text("Your Adjust settings will be applied.", color = TextTertiary, fontSize = 11.5.sp)
+        }
     }
 }
 

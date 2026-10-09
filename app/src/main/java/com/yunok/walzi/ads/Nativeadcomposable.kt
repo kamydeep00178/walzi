@@ -34,7 +34,8 @@ private const val MEDIA_MAX_HEIGHT_DP = 280
  * distinct full row - it never imitates a wallpaper card, so it can't be mistaken for content.
  *
  * Renders nothing while [nativeAd] is null. The ad's lifetime is owned by [AdViewModel], which
- * destroys it in onCleared(). Each NativeAd must be shown in one slot only.
+ * hands it back to [NativeAdCache] in onCleared() (destroyed once displayed). Each NativeAd must
+ * be shown in one slot only.
  */
 @Composable
 fun NativeAdCard(nativeAd: NativeAd?, modifier: Modifier = Modifier, big: Boolean = false) {
@@ -98,8 +99,16 @@ fun NativeAdCard(nativeAd: NativeAd?, modifier: Modifier = Modifier, big: Boolea
 
             // Register only once the view is attached: registering a detached NativeAdView can
             // leave the required AdChoices icon (and impression tracking) unrendered.
-            if (adView.isAttachedToWindow) adView.setNativeAd(nativeAd)
-            else adView.doOnAttach { (it as NativeAdView).setNativeAd(nativeAd) }
+            // Once bound it counts as displayed, so the cache never hands it to another slot.
+            if (adView.isAttachedToWindow) {
+                adView.setNativeAd(nativeAd)
+                NativeAdCache.markShown(nativeAd)
+            } else {
+                adView.doOnAttach {
+                    (it as NativeAdView).setNativeAd(nativeAd)
+                    NativeAdCache.markShown(nativeAd)
+                }
+            }
         }
     )
 }

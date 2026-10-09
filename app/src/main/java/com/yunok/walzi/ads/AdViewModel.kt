@@ -2,19 +2,12 @@ package com.yunok.walzi.ads
 
 import android.app.Activity
 import android.content.Context
-import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.android.gms.ads.AdListener
-import com.google.android.gms.ads.AdLoader
-import com.google.android.gms.ads.AdRequest
-import com.google.android.gms.ads.LoadAdError
-import com.google.android.gms.ads.VideoOptions
 import com.google.android.gms.ads.nativead.NativeAd
-import com.google.android.gms.ads.nativead.NativeAdOptions
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.first
@@ -59,32 +52,21 @@ class AdViewModel @Inject constructor(
         }
     }
 
-    /** Loads up to [count] native ads for this screen (once). Each ad is shown in one slot only. */
+    /**
+     * Fills up to [count] native ad slots for this screen (once), one at a time from the shared
+     * [NativeAdCache] - usually instant, and unseen ads from earlier screens are reused instead
+     * of requesting new ones. Stops at the first no-fill. Each ad is shown in one slot only.
+     */
     fun requestNativeAds(count: Int) {
         if (!AdsConfig.ADS_ENABLED || nativeRequested) return
         nativeRequested = true
         viewModelScope.launch {
-            AdManager.isInitialized.first { it }
-            AdLoader.Builder(appContext, AdManager.NATIVE_AD_UNIT_ID)
-                .forNativeAd { ad ->
-                    // The ViewModel may have been cleared while the request was in flight.
-                    if (!viewModelScope.isActive) ad.destroy() else loadedNativeAds = loadedNativeAds + ad
-                }
-                // Landscape media suits the full-width big card; videos start muted (never surprise
-                // the user with sound).
-                .withNativeAdOptions(
-                    NativeAdOptions.Builder()
-                        .setMediaAspectRatio(NativeAdOptions.NATIVE_MEDIA_ASPECT_RATIO_LANDSCAPE)
-                        .setVideoOptions(VideoOptions.Builder().setStartMuted(true).build())
-                        .build()
-                )
-                .withAdListener(object : AdListener() {
-                    override fun onAdFailedToLoad(error: LoadAdError) {
-                        Log.w(TAG, "Native ad failed to load: ${error.message}")
-                    }
-                })
-                .build()
-                .loadAds(AdRequest.Builder().build(), count)
+            repeat(count) {
+                val ad = NativeAdCache.obtain(appContext) ?: return@launch
+                // The ViewModel may have been cleared while waiting: give the ad back.
+                if (!isActive) { NativeAdCache.recycle(ad); return@launch }
+                loadedNativeAds = loadedNativeAds + ad
+            }
         }
     }
 
@@ -99,12 +81,9 @@ class AdViewModel @Inject constructor(
     }
 
     override fun onCleared() {
-        // NativeAd holds native resources and must be destroyed explicitly.
-        loadedNativeAds.forEach { it.destroy() }
+        // Displayed ads are destroyed; never-displayed fresh ones go back to the cache for the
+        // next screen (NativeAd holds native resources, so nothing is just dropped).
+        loadedNativeAds.forEach { NativeAdCache.recycle(it) }
         loadedNativeAds = emptyList()
-    }
-
-    private companion object {
-        const val TAG = "AdViewModel"
     }
 }
